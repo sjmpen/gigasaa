@@ -1,0 +1,175 @@
+/* Säädatan haku Open-Meteosta (https://open-meteo.com, CC BY 4.0, ei API-avainta).
+ *   - forecast:  nykyhetki, tunti- ja päiväennuste 16 päivää + 31 päivää taaksepäin
+ *   - ensemble:  GFS-parviennuste 35 päivää → kuukauden lämpötilaennusteen loppuosa
+ *   - archive:   ERA5-uusanalyysi → viime vuoden vastaava jakso
+ *   - geocoding: paikkahaku
+ * Kaikki ajat käsitellään paikallisaikana "naiiveina" UTC-päivämäärinä (getUTC*),
+ * jolloin selaimen oma aikavyöhyke ei sekoita laskuja. */
+(function () {
+  'use strict';
+  const WX = (window.WX = window.WX || {});
+
+  const DAY = 86400000;
+  const iso = (d) => d.toISOString().slice(0, 10);
+  const parseLocal = (s) => new Date(s.length === 10 ? s + 'T00:00:00Z' : s.length === 16 ? s + ':00Z' : s + 'Z');
+  const addDays = (d, n) => new Date(d.getTime() + n * DAY);
+  /** Sama päivämäärä vuotta aiemmin (29.2. → 28.2.) */
+  function yearAgo(dateStr) {
+    let [y, m, d] = dateStr.split('-').map(Number);
+    if (m === 2 && d === 29) d = 28;
+    return `${y - 1}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+  }
+  WX.dates = { iso, parseLocal, addDays, yearAgo, DAY };
+
+  async function getJSON(url, timeout) {
+    const ctl = new AbortController();
+    const t = setTimeout(() => ctl.abort(), timeout || 15000);
+    try {
+      const res = await fetch(url, { signal: ctl.signal });
+      let body = null;
+      try { body = await res.json(); } catch (e) { /* ei JSONia */ }
+      if (!res.ok || (body && body.error)) throw new Error((body && body.reason) || `HTTP ${res.status}`);
+      return body;
+    } finally {
+      clearTimeout(t);
+    }
+  }
+  const qs = (o) => Object.entries(o).map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join('&');
+
+  const CURRENT = 'temperature_2m,apparent_temperature,relative_humidity_2m,precipitation,weather_code,cloud_cover,pressure_msl,wind_speed_10m,wind_direction_10m,wind_gusts_10m,is_day';
+  const HOURLY = 'temperature_2m,precipitation,precipitation_probability,weather_code,wind_speed_10m,wind_direction_10m,is_day';
+  const DAILY = 'weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum,precipitation_probability_max,wind_speed_10m_max,wind_direction_10m_dominant,sunrise,sunset';
+
+  const api = {};
+
+  api.geocode = async function (name) {
+    const r = await getJSON('https://geocoding-api.open-meteo.com/v1/search?' + qs({ name, count: 8, language: 'fi', format: 'json' }), 8000);
+    return (r.results || []).map((p) => ({
+      name: p.name,
+      detail: [p.admin1 && p.admin1 !== p.name ? p.admin1 : null, p.country].filter(Boolean).join(', '),
+      lat: p.latitude,
+      lon: p.longitude,
+    }));
+  };
+
+  api.reverse = async function (lat, lon) {
+    try {
+      const r = await getJSON('https://api.bigdatacloud.net/data/reverse-geocode-client?' + qs({ latitude: lat, longitude: lon, localityLanguage: 'fi' }), 6000);
+      return r.city || r.locality || r.principalSubdivision || null;
+    } catch (e) {
+      return null;
+    }
+  };
+
+  api.forecastRaw = (lat, lon) =>
+    getJSON('https://api.open-meteo.com/v1/forecast?' + qs({
+      latitude: lat, longitude: lon, current: CURRENT, hourly: HOURLY, daily: DAILY,
+      wind_speed_unit: 'ms', timezone: 'auto', past_days: 31, forecast_days: 16,
+    }));
+
+  // Kokeillaan malleja järjestyksessä; ensimmäinen toimiva kelpaa.
+  api.ensembleRaw = async function (lat, lon) {
+    let err;
+    for (const model of ['gfs05', 'gfs_seamless']) {
+      try {
+        return await getJSON('https://ensemble-api.open-meteo.com/v1/ensemble?' + qs({
+          latitude: lat, longitude: lon, hourly: 'temperature_2m', models: model, forecast_days: 35, timezone: 'auto',
+        }), 20000);
+      } catch (e) { err = e; }
+    }
+    throw err;
+  };
+
+  api.archiveRaw = (lat, lon, start, end) =>
+    getJSON('https://archive-api.open-meteo.com/v1/archive?' + qs({
+      latitude: lat, longitude: lon, start_date: start, end_date: end,
+      daily: 'temperature_2m_mean,temperature_2m_max,temperature_2m_min', timezone: 'auto',
+    }), 20000);
+
+  // ---------- jäsentäminen ----------
+  function mean(a) { const v = a.filter((x) => x != null); return v.length ? v.reduce((s, x) => s + x, 0) / v.length : null; }
+
+  api.parseForecast = function (r) {
+    const off = r.utc_offset_seconds || 0;
+    const now = new Date(Date.now() + off * 1000);
+    const c = r.current;
+    const current = {
+      time: parseLocal(c.time), temp: c.temperature_2m, feels: c.apparent_temperature, humidity: c.relative_humidity_2m,
+      precip: c.precipitation, code: c.weather_code, cloud: c.cloud_cover, pressure: c.pressure_msl,
+      wind: c.wind_speed_10m, windDir: c.wind_direction_10m, gust: c.wind_gusts_10m, isDay: !!c.is_day,
+    };
+    const h = r.hourly;
+    const hourly = h.time.map((t, i) => ({
+      time: parseLocal(t), date: t.slice(0, 10), temp: h.temperature_2m[i], precip: h.precipitation[i],
+      prob: h.precipitation_probability ? h.precipitation_probability[i] : null, code: h.weather_code[i],
+      wind: h.wind_speed_10m[i], windDir: h.wind_direction_10m[i], isDay: !!h.is_day[i],
+    }));
+    const byDate = {};
+    hourly.forEach((x) => (byDate[x.date] = byDate[x.date] || []).push(x.temp));
+    const d = r.daily;
+    const daily = d.time.map((t, i) => ({
+      date: t, code: d.weather_code[i], tmax: d.temperature_2m_max[i], tmin: d.temperature_2m_min[i],
+      tmean: byDate[t] && byDate[t].filter((v) => v != null).length >= 18 ? mean(byDate[t]) : null,
+      precip: d.precipitation_sum[i], prob: d.precipitation_probability_max ? d.precipitation_probability_max[i] : null,
+      wind: d.wind_speed_10m_max[i], windDir: d.wind_direction_10m_dominant ? d.wind_direction_10m_dominant[i] : null,
+      sunrise: d.sunrise[i] ? parseLocal(d.sunrise[i]) : null, sunset: d.sunset[i] ? parseLocal(d.sunset[i]) : null,
+    }));
+    return { offset: off, timezone: r.timezone, now, today: iso(now), current, hourly, daily };
+  };
+
+  /** Parviennusteen päiväkeskiarvot: jäsenten keskiarvo sekä 10/90 %:n vaihteluväli */
+  api.parseEnsemble = function (r) {
+    const h = r.hourly;
+    const keys = Object.keys(h).filter((k) => k.startsWith('temperature_2m'));
+    const out = {};
+    const dates = [];
+    const idx = {};
+    h.time.forEach((t, i) => {
+      const d = t.slice(0, 10);
+      if (!idx[d]) { idx[d] = []; dates.push(d); }
+      idx[d].push(i);
+    });
+    dates.forEach((d) => {
+      const means = [], maxs = [], mins = [];
+      keys.forEach((k) => {
+        const vals = idx[d].map((i) => h[k][i]).filter((v) => v != null);
+        if (vals.length < 4) return;
+        means.push(vals.reduce((a, b) => a + b, 0) / vals.length);
+        maxs.push(Math.max.apply(null, vals));
+        mins.push(Math.min.apply(null, vals));
+      });
+      if (!means.length) return;
+      const s = means.slice().sort((a, b) => a - b);
+      const q = (p) => s[Math.min(s.length - 1, Math.max(0, Math.round(p * (s.length - 1))))];
+      out[d] = { mean: mean(means), max: mean(maxs), min: mean(mins), lo: q(0.1), hi: q(0.9), n: means.length };
+    });
+    return out;
+  };
+
+  api.parseArchive = function (r) {
+    const d = r.daily, out = {};
+    d.time.forEach((t, i) => {
+      out[t] = { mean: d.temperature_2m_mean[i], max: d.temperature_2m_max[i], min: d.temperature_2m_min[i] };
+    });
+    return out;
+  };
+
+  /** Hakee kaiken tarvittavan. Pakollinen: ennuste. Valinnaiset: parvi ja viime vuosi. */
+  api.loadAll = async function (lat, lon, demo) {
+    const src = demo ? WX.demo : api;
+    const fc = api.parseForecast(await src.forecastRaw(lat, lon));
+    const start = iso(addDays(parseLocal(fc.today), -31));
+    const end = iso(addDays(parseLocal(fc.today), 31));
+    const [ens, arch] = await Promise.allSettled([
+      src.ensembleRaw(lat, lon).then(api.parseEnsemble),
+      src.archiveRaw(lat, lon, yearAgo(start), yearAgo(end)).then(api.parseArchive),
+    ]);
+    fc.extended = ens.status === 'fulfilled' ? ens.value : null;
+    fc.lastYear = arch.status === 'fulfilled' ? arch.value : null;
+    if (ens.status === 'rejected') console.warn('Pitkä ennuste ei saatavilla:', ens.reason);
+    if (arch.status === 'rejected') console.warn('Viime vuoden data ei saatavilla:', arch.reason);
+    return fc;
+  };
+
+  WX.api = api;
+})();
