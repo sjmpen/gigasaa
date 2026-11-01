@@ -52,7 +52,7 @@
   ].map(([name, detail, lat, lon, pop]) => ({ name, detail: detail + ', Suomi', lat, lon, pop: pop || null, cc: 'FI', fc: pop ? 'PPL' : 'PRK' }));
 
   const state = { place: null, data: null, selected: null, metric: 'mean', weekDays: 7, loading: 0 };
-  let scene, chart;
+  let scene, chart, mascot;
 
   function readPlace() {
     const lat = parseFloat(params.get('lat')), lon = parseFloat(params.get('lon'));
@@ -237,6 +237,7 @@
     const ev = currentEvents();
     $('greeting').textContent = ev.greeting || '';
     $('greeting').hidden = !ev.greeting;
+    if (ev.greeting && state.greeted !== ev.greeting) { state.greeted = ev.greeting; setTimeout(() => mascot.react(ev.greeting), 600); }
   }
 
   function arrow(dir) {
@@ -603,6 +604,8 @@
     document.body.dataset.phase = s.phase;
     scene.set(s);
     updateOcclusion();
+    mascot.set({ cc: s.cc, kind: pick('pvMascot', 'mascot') || null, temp: s.temp, code: s.code, phase: s.phase, windX: scene.sc ? scene.sc.windX : 0, ev: s.ev });
+    labelMascot();
   }
 
   // ---------- haku ----------
@@ -690,6 +693,45 @@
     });
   }
 
+  // ---------- maskotti ----------
+  const regionName = (() => {
+    try {
+      const dn = new Intl.DisplayNames(['fi'], { type: 'region' });
+      return (cc) => { try { return cc ? dn.of(cc.toUpperCase()) : null; } catch (e) { return null; } };
+    } catch (e) { return () => null; }
+  })();
+
+  function labelMascot() {
+    const p = state.place, cn = p && p.cc ? regionName(p.cc) : null;
+    const t = `Maskotti: ${mascot.name()}${cn ? ' (' + cn + ')' : ''}. Paina, niin se kommentoi säätä.`;
+    $('mascotBtn').setAttribute('aria-label', t);
+    $('mascotBtn').title = t;
+  }
+
+  /** Maskotin kommentti vallitsevaan säähän. */
+  function remark() {
+    const d = state.data;
+    if (!d) return 'Hetki, haen säätä…';
+    const c = d.current, sc = WX.describe(c.code).scene, ev = currentEvents();
+    const t = c.temp, phase = scene.sc ? scene.sc.phase : 'day';
+    if (ev.greeting && Math.random() < 0.5) return ev.greeting;
+    if (sc.thunder) return 'Ukkonen jyrisee – pysy sisällä!';
+    if (sc.precip === 'snow') return t <= -10 ? `Brr! ${F.temp(t)} ja lunta sataa.` : 'Lunta sataa! Hyvä hiihtokeli.';
+    if (sc.precip !== 'none') return sc.amount > 0.7 ? 'Nyt sataa kunnolla – sateenvarjo mukaan!' : 'Ota sateenvarjo mukaan!';
+    if (c.wind >= 12) return 'Tuulee kovaa – pidä hatusta kiinni!';
+    if (sc.fog) return 'Sumuista – liiku varovasti.';
+    if (t <= -15) return `Brr, ${F.temp(t)}! Pipo päähän ja lapaset käteen.`;
+    if (phase === 'night') {
+      const kp = state.env && state.env.kp;
+      return kp != null && WX.astro.auroraStrength(kp, state.place.lat, state.place.lon) > 0.3 && sc.clouds < 0.6 ? 'Katso taivaalle – revontulia!' : 'Hyvää yötä! Zzz…';
+    }
+    if (t <= 0) return 'Pakkasta – muista lapaset!';
+    if (t >= 27) return 'Helle! Juo vettä ja muista aurinkorasva.';
+    if (sc.clouds <= 0.25) return 'Ihana poutapäivä!';
+    if (sc.clouds >= 0.9) return 'Pilvistä, mutta poutaa.';
+    return `Sää on ${WX.describe(c.code).text.toLowerCase()}, ${F.temp(t)}.`;
+  }
+
   // ---------- taustan näkyvät alueet ja maisematila ----------
   /** Kertoo taustalle, mitkä ruudun kohdat käyttöliittymä peittää, jotta eläimet osaavat pysyä näkyvillä. */
   let occPending = false;
@@ -721,8 +763,11 @@
   // ---------- käynnistys ----------
   function init() {
     scene = WX.scene = new WX.PixelScene($('bg'));
+    mascot = new WX.Mascot($('mascot'), $('mascotBtn'), $('mascotBubble'));
+    $('mascotBtn').addEventListener('click', () => mascot.react(remark()));
+    WX.MASCOT_KINDS.forEach(([k, n]) => { const o = document.createElement('option'); o.value = k; o.textContent = n; $('pvMascot').appendChild(o); });
     chart = new WX.YearChart($('chart'));
-    const PV = { scene: 'pvScene', time: 'pvTime', season: 'pvSeason', settle: 'pvSettle', region: 'pvStyle', biome: 'pvBiome', coast: 'pvCoast', kp: 'pvKp', event: 'pvEvent', wind: 'pvWind', relief: 'pvRelief' };
+    const PV = { scene: 'pvScene', time: 'pvTime', season: 'pvSeason', settle: 'pvSettle', region: 'pvStyle', biome: 'pvBiome', coast: 'pvCoast', kp: 'pvKp', event: 'pvEvent', wind: 'pvWind', relief: 'pvRelief', mascot: 'pvMascot' };
     Object.entries(PV).forEach(([k, id]) => {
       const sel = $(id);
       if (params.get(k)) sel.value = params.get(k);
