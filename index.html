@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="fi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Gigasää</title>
+  <meta name="description" content="Sää nyt, päivän ja viikon ennuste sekä lämpötilavertailu viime vuoteen – pikseligrafiikalla.">
+  <meta name="theme-color" content="#0b1030">
+  <link rel="preload" href="fonts/DotGothic16.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="fonts/Jersey10.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <canvas id="bg" aria-hidden="true"></canvas>
+
+  <div class="app">
+    <header class="topbar">
+      <a class="logo" href="./" aria-label="Gigasää etusivu">GIGA<span>SÄÄ</span></a>
+      <form class="search" id="search" role="search" autocomplete="off">
+        <label class="sr-only" for="q">Hae paikkakuntaa</label>
+        <input id="q" type="search" placeholder="Hae paikkakuntaa…" aria-autocomplete="list" aria-controls="suggest" aria-expanded="false">
+        <ul id="suggest" class="suggest window" role="listbox" hidden></ul>
+      </form>
+      <button id="locate" class="btn icon-btn" type="button" title="Käytä omaa sijaintia" aria-label="Käytä omaa sijaintia">
+        <svg viewBox="0 0 16 16" width="20" height="20" aria-hidden="true" shape-rendering="crispEdges"><path fill="currentColor" d="M7 0h2v3H7zM7 13h2v3H7zM0 7h3v2H0zM13 7h3v2h-3zM5 3h6v1H5zM4 4h1v1H4zM11 4h1v1h-1zM3 5h1v6H3zM12 5h1v6h-1zM4 11h1v1H4zM11 11h1v1h-1zM5 12h6v1H5zM7 7h2v2H7z"/></svg>
+      </button>
+    </header>
+
+    <div id="status" class="window status" role="status" hidden></div>
+
+    <main id="main" class="is-loading">
+      <section class="hero" aria-labelledby="place">
+        <h1 id="place" class="place">&nbsp;</h1>
+        <div class="hero-main">
+          <img id="nowIcon" class="px hero-icon" alt="" width="120" height="120">
+          <div>
+            <div id="nowTemp" class="hero-temp">–</div>
+            <div id="nowDesc" class="hero-desc">Ladataan säätä…</div>
+          </div>
+        </div>
+        <div id="nowMeta" class="hero-meta"></div>
+      </section>
+
+      <section class="window now" aria-label="Sää nyt">
+        <h2>Nyt</h2>
+        <dl id="nowStats" class="stats"></dl>
+      </section>
+
+      <section class="window today" aria-labelledby="todayTitle">
+        <div class="win-head">
+          <h2 id="todayTitle">Päivän sää</h2>
+          <span id="todayWhen" class="sub"></span>
+        </div>
+        <div class="hours-scroll" tabindex="0" aria-label="Tuntiennuste">
+          <div id="hours" class="hours"></div>
+        </div>
+      </section>
+
+      <section class="window week" aria-labelledby="weekTitle">
+        <div class="win-head">
+          <h2 id="weekTitle">Viikon sää</h2>
+          <button id="weekMore" class="btn small" type="button" aria-expanded="false">Näytä 2 viikkoa</button>
+        </div>
+        <ol id="days" class="days"></ol>
+      </section>
+
+      <section class="window compare" aria-labelledby="cmpTitle">
+        <div class="win-head">
+          <h2 id="cmpTitle">Lämpötila: tämä vuosi vs. viime vuosi</h2>
+        </div>
+        <p id="cmpSummary" class="summary"></p>
+        <div class="chart-controls">
+          <div class="seg" role="group" aria-label="Näytettävä lämpötila">
+            <button type="button" data-metric="mean" aria-pressed="true">Keskilämpö</button>
+            <button type="button" data-metric="max" aria-pressed="false">Ylin</button>
+            <button type="button" data-metric="min" aria-pressed="false">Alin</button>
+          </div>
+          <ul class="legend" aria-label="Selite">
+            <li><span class="key key-cur"></span><span id="lgCur">Tämä vuosi</span></li>
+            <li><span class="key key-cur key-dash"></span>Ennuste</li>
+            <li><span class="key key-band"></span>Pitkän ennusteen vaihteluväli</li>
+            <li><span class="key key-prev"></span><span id="lgPrev">Viime vuosi</span></li>
+          </ul>
+        </div>
+        <div id="chart" class="chart"></div>
+        <p id="cmpNote" class="note"></p>
+        <details class="table-view">
+          <summary>Näytä taulukkona</summary>
+          <div class="table-wrap"><table id="cmpTable"></table></div>
+        </details>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <p>Säädata: <a href="https://open-meteo.com/" rel="noopener">Open-Meteo.com</a> (CC BY 4.0) – ennustemallit, GFS-parviennuste ja ERA5-uusanalyysi. Fontit: DotGothic16 ja Jersey 10 (OFL).</p>
+      <details class="preview">
+        <summary>Taustan esikatselu</summary>
+        <div class="preview-row">
+          <label>Sää
+            <select id="pvScene">
+              <option value="">Todellinen</option>
+              <option value="clear">Selkeää</option>
+              <option value="partly">Puolipilvistä</option>
+              <option value="cloudy">Pilvistä</option>
+              <option value="fog">Sumua</option>
+              <option value="drizzle">Tihkua</option>
+              <option value="rain">Sadetta</option>
+              <option value="heavyrain">Rankkasadetta</option>
+              <option value="sleet">Jäätävää sadetta</option>
+              <option value="snow">Lumisadetta</option>
+              <option value="heavysnow">Lumimyräkkä</option>
+              <option value="thunder">Ukkosta</option>
+            </select>
+          </label>
+          <label>Aika
+            <select id="pvTime">
+              <option value="">Todellinen</option>
+              <option value="day">Päivä</option>
+              <option value="dusk">Hämärä</option>
+              <option value="night">Yö</option>
+            </select>
+          </label>
+          <label>Vuodenaika
+            <select id="pvSeason">
+              <option value="">Todellinen</option>
+              <option value="spring">Kevät</option>
+              <option value="summer">Kesä</option>
+              <option value="autumn">Ruska</option>
+              <option value="late">Myöhäissyksy</option>
+              <option value="winter">Talvi</option>
+            </select>
+          </label>
+        </div>
+      </details>
+    </footer>
+  </div>
+
+  <script src="js/weathercodes.js"></script>
+  <script src="js/icons.js"></script>
+  <script src="js/pixelbg.js"></script>
+  <script src="js/api.js"></script>
+  <script src="js/demo.js"></script>
+  <script src="js/chart.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
