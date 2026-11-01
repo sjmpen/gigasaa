@@ -198,6 +198,8 @@ main.is-loading { opacity: 0.6; }
   text-shadow: 3px 3px 0 var(--shadow), -1px -1px 0 var(--shadow), 1px -1px 0 var(--shadow), -1px 1px 0 var(--shadow);
 }
 .place { margin: 0; font-family: var(--display); font-size: 48px; font-weight: 400; line-height: 1; letter-spacing: 0.02em; }
+.place-info { margin: 4px 0 0; font-size: 14px; color: var(--ink); cursor: help; }
+.greeting { margin: 8px 0 0; font-size: 20px; color: var(--gold); }
 .hero-main { display: flex; align-items: center; gap: 12px; margin-top: 6px; }
 .hero-icon { width: 120px; height: 120px; filter: drop-shadow(3px 3px 0 rgba(10, 12, 40, 0.6)); }
 .hero-temp { font-family: var(--display); font-size: 120px; line-height: 0.85; }

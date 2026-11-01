@@ -56,7 +56,7 @@
     const now = Date.now() + off * 1000;
     const today = Math.floor(now / DAY) * DAY;
     const start = today - 31 * DAY, end = today + 16 * DAY;
-    const H = { time: [], temperature_2m: [], precipitation: [], precipitation_probability: [], weather_code: [], wind_speed_10m: [], wind_direction_10m: [], is_day: [] };
+    const H = { time: [], temperature_2m: [], precipitation: [], precipitation_probability: [], weather_code: [], wind_speed_10m: [], wind_direction_10m: [], is_day: [], snow_depth: [] };
     const D = { time: [], weather_code: [], temperature_2m_max: [], temperature_2m_min: [], precipitation_sum: [], precipitation_probability_max: [], wind_speed_10m_max: [], wind_direction_10m_dominant: [], sunrise: [], sunset: [] };
     for (let day = start; day < end; day += DAY) {
       const st = sun(day, lat, lon, off);
@@ -76,6 +76,7 @@
         H.wind_speed_10m.push(r1(Math.max(0.5, wind)));
         H.wind_direction_10m.push(Math.round((200 + 80 * Math.sin(ms / DAY)) % 360));
         H.is_day.push(isDay);
+        H.snow_depth.push(t < -2 ? 0.15 : 0);
         mx = Math.max(mx, t); mn = Math.min(mn, t); ps += mm; pp = Math.max(pp, prob); wmax = Math.max(wmax, wind);
         if (h >= 8 && h <= 20 && code > worst) worst = code;
       }
@@ -95,7 +96,7 @@
     const [cc, cmm] = weather(cur, ct);
     const st = sun(today, lat, lon, off);
     return {
-      latitude: lat, longitude: lon, utc_offset_seconds: off, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      latitude: lat, longitude: lon, elevation: Math.abs(lat) > 66 ? 120 : 15, utc_offset_seconds: off, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
       current: {
         time: fmt(new Date(cur)), temperature_2m: r1(ct), apparent_temperature: r1(ct - 3.2), relative_humidity_2m: 84,
         precipitation: r1(cmm), weather_code: cc, cloud_cover: cc >= 3 ? 100 : cc * 30, pressure_msl: 1008.4,
@@ -125,16 +126,27 @@
   };
 
   demo.archiveRaw = async function (lat, lon, start, end) {
-    const D = { time: [], temperature_2m_mean: [], temperature_2m_max: [], temperature_2m_min: [] };
+    const D = { time: [], temperature_2m_mean: [], temperature_2m_max: [], temperature_2m_min: [], precipitation_sum: [] };
     for (let ms = Date.parse(start); ms <= Date.parse(end); ms += DAY) {
       const m = clim(new Date(ms), lat) + anomaly(ms, 7);
       D.time.push(fmt(new Date(ms)).slice(0, 10));
       D.temperature_2m_mean.push(r1(m));
       D.temperature_2m_max.push(r1(m + 2.6));
       D.temperature_2m_min.push(r1(m - 2.4));
+      D.precipitation_sum.push(r1(Math.max(0, 1.9 + 2.2 * Math.sin(ms / DAY * 0.9) + 1.2 * Math.sin(ms / DAY / 58))));
     }
     return { daily: D };
   };
+
+  // Ympäristödata demossa: rannikkopaikat listasta, korkeuserot leveysasteesta
+  const COASTAL = ['helsinki', 'espoo', 'turku', 'oulu', 'vaasa', 'pori', 'kotka', 'hanko'];
+  demo.kp = async () => 3;
+  demo.coast = async (lat, lon) => {
+    const n = ((new URLSearchParams(location.search).get('name')) || 'Helsinki').toLowerCase();
+    return COASTAL.includes(n) || (Math.abs(lat - 60.17) < 0.05 && Math.abs(lon - 24.94) < 0.05);
+  };
+  demo.waves = async () => 0.6;
+  demo.relief = async (lat) => (Math.abs(lat) > 66 ? { elev: 120, peak: 560, relief: 440 } : { elev: 15, peak: 70, relief: 55 });
 
   WX.demo = demo;
 })();
