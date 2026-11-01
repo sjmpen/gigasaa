@@ -172,6 +172,13 @@ button { font: inherit; color: inherit; }
 .suggest li[aria-selected='true'] .hand, .suggest li:hover .hand { visibility: visible; }
 .icon-btn { padding: 8px; line-height: 0; border-width: 3px; border-radius: 7px; }
 .icon-btn.busy svg { animation: blink 0.6s steps(2) infinite; }
+.icon-btn[aria-pressed='true'] { color: var(--gold); background: linear-gradient(180deg, #3a52c0, #1c2a85); }
+
+/* Maisematila: sääikkunat piiloon, jotta koko taustamaisema näkyy */
+body.scenic main > .window,
+body.scenic .status,
+body.scenic .footer { display: none !important; }
+body.scenic .hero { min-height: 0; }
 @keyframes blink { 50% { opacity: 0.3; } }
 
 .status {
@@ -405,7 +412,7 @@ main.is-loading { opacity: 0.6; }
   .topbar { flex-wrap: wrap; gap: 10px; }
   .logo { font-size: 36px; }
   .search { order: 3; flex-basis: 100%; max-width: none; }
-  #locate { margin-left: auto; }
+  #scenic { margin-left: auto; }
   .hero { min-height: 220px; }
   .place { font-size: 40px; }
   .hero-icon { width: 96px; height: 96px; }

@@ -174,6 +174,7 @@
   }
 
   function renderAll() {
+    setTimeout(updateOcclusion, 0);
     renderPlaceInfo();
     renderNow();
     renderWeek();
@@ -601,6 +602,7 @@
     if (s.season || pv) { s.snowDepth = null; s.iceState = null; }
     document.body.dataset.phase = s.phase;
     scene.set(s);
+    updateOcclusion();
   }
 
   // ---------- haku ----------
@@ -688,6 +690,34 @@
     });
   }
 
+  // ---------- taustan näkyvät alueet ja maisematila ----------
+  /** Kertoo taustalle, mitkä ruudun kohdat käyttöliittymä peittää, jotta eläimet osaavat pysyä näkyvillä. */
+  let occPending = false;
+  function updateOcclusion() {
+    if (occPending || !scene) return;
+    occPending = true;
+    requestAnimationFrame(() => {
+      occPending = false;
+      const rects = [];
+      document.querySelectorAll('.window:not([hidden]), .topbar .search, .topbar .btn').forEach((el) => {
+        const r = el.getBoundingClientRect();
+        if (!r.width || !r.height || r.bottom < 0 || r.top > window.innerHeight) return;
+        rects.push([r.left, r.top, r.right, r.bottom]);
+      });
+      scene.setOcclusion(rects);
+    });
+  }
+
+  function setScenic(on) {
+    document.body.classList.toggle('scenic', on);
+    const b = $('scenic');
+    b.setAttribute('aria-pressed', String(on));
+    b.title = on ? 'Näytä säätiedot' : 'Näytä koko maisema';
+    b.setAttribute('aria-label', b.title);
+    if (on) window.scrollTo(0, 0);
+    updateOcclusion();
+  }
+
   // ---------- käynnistys ----------
   function init() {
     scene = WX.scene = new WX.PixelScene($('bg'));
@@ -702,6 +732,14 @@
     updateScene();
     setupSearch();
     setupLocate();
+    $('scenic').addEventListener('click', () => setScenic(!document.body.classList.contains('scenic')));
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && document.body.classList.contains('scenic') && document.activeElement !== $('q')) setScenic(false);
+    });
+    window.addEventListener('scroll', updateOcclusion, { passive: true });
+    let rz;
+    window.addEventListener('resize', () => { clearTimeout(rz); rz = setTimeout(updateOcclusion, 200); });
+    if (document.fonts && document.fonts.ready) document.fonts.ready.then(updateOcclusion);
     document.querySelectorAll('.seg button').forEach((b) =>
       b.addEventListener('click', () => {
         state.metric = b.dataset.metric;
@@ -714,6 +752,7 @@
       $('weekMore').setAttribute('aria-expanded', String(state.weekDays > 7));
       $('weekTitle').textContent = state.weekDays === 7 ? 'Viikon sää' : 'Kahden viikon sää';
       if (state.data) renderWeek();
+      updateOcclusion();
     });
     load(readPlace() || DEFAULT);
     // päivitys 15 min välein ja kun välilehti palaa näkyviin
