@@ -56,6 +56,10 @@ paikan asutuksen, maanosan ja ilmaston mukaan.
   viiri. Juhlapäivän toivotus näkyy säätietojen alla.
 - **Eläimet**: porot Lapissa, kamelit aavikolla, kirahvi savannilla, kenguru Australiassa,
   sorsat kesäjärvellä, lokit merenrannalla ja muuttolintujen aurat keväällä ja syksyllä.
+  Eläimet hakeutuvat kohtiin, joita sääikkunat eivät peitä (esim. leveällä näytöllä sivuille),
+  ja vaihtavat paikkaa, kun sivua vieritetään.
+- **Maisematila**: yläpalkin maisemapainike piilottaa sääikkunat, jolloin koko taustamaisema
+  eläimineen näkyy myös puhelimella. Takaisin pääsee samasta painikkeesta tai Esc-näppäimellä.
 - **Paikkahaku** ja **oma sijainti** (selaimen paikannus).
 
 ## Käyttö

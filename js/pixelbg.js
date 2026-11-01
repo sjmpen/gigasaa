@@ -616,8 +616,10 @@
     this.layers.land = L;
     this.tintC = TINT[ph];
 
-    // ---- eläimet ----
+    // ---- eläimet (sijoitetaan käyttöliittymän ikkunoiden ulkopuolelle) ----
+    this.rand = rand;
     this.buildAnimals(rand);
+    this.rehome();
     // ---- tapahtumat ----
     this.fw = sc.ev.fx.fireworks ? { rate: sc.ev.fx.fireworks, rockets: [], parts: [], next: 0 } : null;
     this.sparks = [];
@@ -1923,7 +1925,7 @@
     if (!f.birds && t > f.next) {
       f.dir = rand() < 0.5 ? -1 : 1;
       f.x = f.dir > 0 ? -20 : this.W + 20;
-      f.y = this.H * (0.08 + rand() * 0.22);
+      f.y = this.visibleSkyRow(this.H * 0.06, this.H * 0.32);
       f.v = 10 + rand() * 6;
       const n = 7 + Math.floor(rand() * 9);
       f.birds = [];
@@ -1969,6 +1971,103 @@
         const fi = Math.floor(t / 180 + g.ph) % 2;
         ctx.drawImage(g.spr.L[fi], Math.round(g.cx + Math.cos(a) * g.R), Math.round(g.cy + Math.sin(2 * a) * g.R * 0.25));
       });
+  };
+
+  // ---------- käyttöliittymän peittämät alueet ----------
+  /** rects: käyttöliittymän ikkunat ruudun pikseleinä [vasen, ylä, oikea, ala] (getBoundingClientRect). */
+  PixelScene.prototype.setOcclusion = function (rects) {
+    const px = this.px || 1;
+    this.occ = rects.map((r) => [Math.floor(r[0] / px), Math.floor(r[1] / px), Math.ceil(r[2] / px), Math.ceil(r[3] / px)]);
+    this.rehome();
+  };
+
+  PixelScene.prototype.occluded = function (x0, y0, x1, y1) {
+    const o = this.occ;
+    if (!o) return false;
+    for (let i = 0; i < o.length; i++) {
+      const r = o[i];
+      if (x1 > r[0] && x0 < r[2] && y1 > r[1] && y0 < r[3]) return true;
+    }
+    return false;
+  };
+
+  /** Yhtenäiset vapaat x-välit, joilla w-levyinen laatikko (boxAt(x) → [y0, y1] tai null) näkyy kokonaan. */
+  PixelScene.prototype.freeSegments = function (w, boxAt) {
+    const segs = [];
+    let cur = null;
+    for (let x = 2; x <= this.W - 2 - w; x++) {
+      const b = boxAt(x);
+      if (b && !this.occluded(x, b[0], x + w, b[1])) {
+        if (!cur) cur = [x, x];
+        cur[1] = x;
+      } else if (cur) { segs.push(cur); cur = null; }
+    }
+    if (cur) segs.push(cur);
+    return segs;
+  };
+
+  /** Taivaan rivi, jolla on eniten näkyvää tilaa (lintuparville). */
+  PixelScene.prototype.visibleSkyRow = function (y0, y1) {
+    let best = y0 + (y1 - y0) * this.rand(), bestFree = -1;
+    for (let i = 0; i < 12; i++) {
+      const y = Math.round(y0 + (y1 - y0) * this.rand());
+      let free = 0;
+      for (let x = 0; x < this.W; x += 4) if (!this.occluded(x, y - 3, x + 4, y + 8)) free++;
+      if (free > bestFree) { bestFree = free; best = y; }
+    }
+    return best;
+  };
+
+  /** Siirtää piiloon jääneet eläimet näkyville ja rajaa näkyvien kulkureitin vapaalle alueelle. */
+  PixelScene.prototype.rehome = function () {
+    if (!this.animals || !this.prof || !this.rand) return;
+    const W = this.W, H = this.H, prof = this.prof, hy = this.hy, rand = this.rand;
+    const choose = (a, segs) => {
+      const xi = Math.round(a.x);
+      let seg = segs.find(([s0, s1]) => xi >= s0 && xi <= s1);
+      if (!seg) {
+        segs.sort((p, q) => q[1] - q[0] - (p[1] - p[0]));
+        seg = segs[Math.floor(rand() * Math.min(2, segs.length))];
+        a.x = seg[0] + rand() * (seg[1] - seg[0]);
+      }
+      a.min = seg[0];
+      a.max = seg[1];
+    };
+    this.animals.forEach((a) => {
+      const w = a.spr.w + 2, h = a.spr.h + 2;
+      if (!a.home) a.home = [a.min, a.max];
+      let segs;
+      if (a.layer === 'land') {
+        segs = this.freeSegments(w, (x) => { const gy = prof[clamp(x + (w >> 1), 0, W - 1)]; return [gy - h - 4, gy + 1]; });
+      } else {
+        // sorsat: vesirivi, jonka alla on vettä koko matkalta eikä etualan puu ole edessä
+        const behindTree = (x0, x1) => (this.trees || []).some((tr) => {
+          const c = tr.x + tr.img.width / 2, r = (tr.sh / 1.35) * 0.45;
+          return x1 > c - r && x0 < c + r;
+        });
+        const rowSegs = (y) => this.freeSegments(w + 3, (x) => (prof[clamp(x, 0, W - 1)] > y + h + 3 && prof[clamp(x + w, 0, W - 1)] > y + h + 3 && !behindTree(x, x + w + 3) ? [y - 1, y + h + 1] : null));
+        segs = rowSegs(a.y);
+        if (!segs.length) {
+          const yMax = Math.max.apply(null, prof) - h - 4;
+          for (let i = 0; i < 16 && !segs.length; i++) {
+            const y = Math.round(hy + 4 + rand() * Math.max(1, yMax - hy - 4));
+            segs = rowSegs(y);
+            if (segs.length) a.y = y;
+          }
+        }
+      }
+      segs = segs.filter(([s0, s1]) => s1 - s0 >= (a.layer === 'land' ? 6 : 3));
+      if (segs.length) choose(a, segs);
+      else { a.min = a.home[0]; a.max = a.home[1]; a.x = clamp(a.x, a.min, a.max); }
+    });
+    // lokit kiertelevät näkyvällä taivaalla
+    (this.gulls || []).forEach((g) => {
+      if (!this.occluded(g.cx - g.R - 3, g.cy - g.R * 0.3 - 3, g.cx + g.R + 6, g.cy + g.R * 0.3 + 3)) return;
+      for (let i = 0; i < 40; i++) {
+        const R = 8 + rand() * 22, cx = R + 3 + rand() * (W - 2 * R - 9), cy = H * 0.06 + rand() * (hy - H * 0.06 - 10);
+        if (!this.occluded(cx - R - 3, cy - R * 0.3 - 3, cx + R + 6, cy + R * 0.3 + 3)) { g.cx = cx; g.cy = cy; g.R = R; break; }
+      }
+    });
   };
 
   WX.PixelScene = PixelScene;
