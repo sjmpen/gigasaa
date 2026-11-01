@@ -31,6 +31,7 @@
     <main id="main" class="is-loading">
       <section class="hero" aria-labelledby="place">
         <h1 id="place" class="place">&nbsp;</h1>
+        <p id="placeInfo" class="place-info"></p>
         <div class="hero-main">
           <img id="nowIcon" class="px hero-icon" alt="" width="120" height="120">
           <div>
@@ -130,6 +131,44 @@
               <option value="winter">Talvi</option>
             </select>
           </label>
+          <label>Asutus
+            <select id="pvSettle">
+              <option value="">Todellinen</option>
+              <option value="rural">Haja-asutus</option>
+              <option value="village">Kylä</option>
+              <option value="town">Pikkukaupunki</option>
+              <option value="city">Kaupunki</option>
+            </select>
+          </label>
+          <label>Alue
+            <select id="pvStyle">
+              <option value="">Todellinen</option>
+              <option value="nordic">Pohjola</option>
+              <option value="europe">Eurooppa</option>
+              <option value="namerica">Pohjois-Amerikka</option>
+              <option value="samerica">Etelä-Amerikka</option>
+              <option value="eastasia">Itä-Aasia</option>
+              <option value="westasia">Länsi- ja Etelä-Aasia</option>
+              <option value="africa">Afrikka</option>
+              <option value="oceania">Oseania</option>
+              <option value="antarctica">Antarktis</option>
+            </select>
+          </label>
+          <label>Kasvillisuus
+            <select id="pvBiome">
+              <option value="">Todellinen</option>
+              <option value="tundra">Tundra</option>
+              <option value="taiga">Taiga</option>
+              <option value="boreal">Havu- ja sekametsä</option>
+              <option value="temperate">Lehtimetsä</option>
+              <option value="subtropical">Subtrooppinen</option>
+              <option value="mediterranean">Välimeri</option>
+              <option value="steppe">Aro</option>
+              <option value="desert">Aavikko</option>
+              <option value="savanna">Savanni</option>
+              <option value="rainforest">Sademetsä</option>
+            </select>
+          </label>
         </div>
       </details>
     </footer>
@@ -138,6 +177,7 @@
   <script src="js/weathercodes.js"></script>
   <script src="js/icons.js"></script>
   <script src="js/pixelbg.js"></script>
+  <script src="js/place.js"></script>
   <script src="js/api.js"></script>
   <script src="js/demo.js"></script>
   <script src="js/chart.js"></script>

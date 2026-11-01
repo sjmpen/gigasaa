@@ -49,13 +49,16 @@
       detail: [p.admin1 && p.admin1 !== p.name ? p.admin1 : null, p.country].filter(Boolean).join(', '),
       lat: p.latitude,
       lon: p.longitude,
+      pop: p.population || null,
+      cc: p.country_code || null,
+      fc: p.feature_code || null,
     }));
   };
 
   api.reverse = async function (lat, lon) {
     try {
       const r = await getJSON('https://api.bigdatacloud.net/data/reverse-geocode-client?' + qs({ latitude: lat, longitude: lon, localityLanguage: 'fi' }), 6000);
-      return r.city || r.locality || r.principalSubdivision || null;
+      return { name: r.city || r.locality || r.principalSubdivision || null, cc: r.countryCode || null };
     } catch (e) {
       return null;
     }
@@ -83,7 +86,7 @@
   api.archiveRaw = (lat, lon, start, end) =>
     getJSON('https://archive-api.open-meteo.com/v1/archive?' + qs({
       latitude: lat, longitude: lon, start_date: start, end_date: end,
-      daily: 'temperature_2m_mean,temperature_2m_max,temperature_2m_min', timezone: 'auto',
+      daily: 'temperature_2m_mean,temperature_2m_max,temperature_2m_min,precipitation_sum', timezone: 'auto',
     }), 20000);
 
   // ---------- jäsentäminen ----------
@@ -149,10 +152,17 @@
   api.parseArchive = function (r) {
     const d = r.daily, out = {};
     d.time.forEach((t, i) => {
-      out[t] = { mean: d.temperature_2m_mean[i], max: d.temperature_2m_max[i], min: d.temperature_2m_min[i] };
+      out[t] = { mean: d.temperature_2m_mean[i], max: d.temperature_2m_max[i], min: d.temperature_2m_min[i], precip: d.precipitation_sum ? d.precipitation_sum[i] : null };
     });
     return out;
   };
+
+  /** Köppenin luokka viimeisen 365 päivän datasta (jos saatavilla) */
+  function climateFrom(arch, today, lat) {
+    const from = iso(addDays(parseLocal(today), -372));
+    const days = Object.keys(arch).filter((k) => k > from).map((k) => ({ date: k, mean: arch[k].mean, precip: arch[k].precip }));
+    return days.length >= 330 ? WX.place.koppen(days, lat) : null;
+  }
 
   /** Hakee kaiken tarvittavan. Pakollinen: ennuste. Valinnaiset: parvi ja viime vuosi. */
   api.loadAll = async function (lat, lon, demo) {
@@ -160,12 +170,16 @@
     const fc = api.parseForecast(await src.forecastRaw(lat, lon));
     const start = iso(addDays(parseLocal(fc.today), -31));
     const end = iso(addDays(parseLocal(fc.today), 31));
-    const [ens, arch] = await Promise.allSettled([
-      src.ensembleRaw(lat, lon).then(api.parseEnsemble),
-      src.archiveRaw(lat, lon, yearAgo(start), yearAgo(end)).then(api.parseArchive),
-    ]);
+    // Yksi arkistohaku kattaa sekä viime vuoden vertailujakson että viimeisen vuoden ilmastoluokitusta varten.
+    // ERA5:n viive on n. 5 päivää, joten haku päättyy viikko sitten. Jos pitkä haku epäonnistuu, haetaan vain vertailujakso.
+    const climEnd = iso(addDays(parseLocal(fc.today), -7));
+    const archive = src.archiveRaw(lat, lon, yearAgo(start), climEnd)
+      .catch(() => src.archiveRaw(lat, lon, yearAgo(start), yearAgo(end)))
+      .then(api.parseArchive);
+    const [ens, arch] = await Promise.allSettled([src.ensembleRaw(lat, lon).then(api.parseEnsemble), archive]);
     fc.extended = ens.status === 'fulfilled' ? ens.value : null;
     fc.lastYear = arch.status === 'fulfilled' ? arch.value : null;
+    fc.climate = fc.lastYear ? climateFrom(fc.lastYear, fc.today, lat) : null;
     if (ens.status === 'rejected') console.warn('Pitkä ennuste ei saatavilla:', ens.reason);
     if (arch.status === 'rejected') console.warn('Viime vuoden data ei saatavilla:', arch.reason);
     return fc;

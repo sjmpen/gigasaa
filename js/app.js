@@ -40,21 +40,28 @@
   const params = new URLSearchParams(location.search);
   const DEMO = params.has('demo');
   const DEFAULT = { name: 'Helsinki', lat: 60.1699, lon: 24.9384 };
+  // Varahaku, jos paikkahaku ei vastaa (ja demotila). Väkiluvut: kunnan/taajaman likimääräinen asukasluku.
   const FALLBACK_PLACES = [
-    ['Helsinki', 'Uusimaa', 60.1699, 24.9384], ['Espoo', 'Uusimaa', 60.2052, 24.6522], ['Vantaa', 'Uusimaa', 60.2934, 25.0378],
-    ['Tampere', 'Pirkanmaa', 61.4978, 23.761], ['Turku', 'Varsinais-Suomi', 60.4518, 22.2666], ['Oulu', 'Pohjois-Pohjanmaa', 65.0121, 25.4651],
-    ['Jyväskylä', 'Keski-Suomi', 62.2426, 25.7473], ['Kuopio', 'Pohjois-Savo', 62.8924, 27.677], ['Lahti', 'Päijät-Häme', 60.9827, 25.6612],
-    ['Pori', 'Satakunta', 61.4851, 21.7974], ['Joensuu', 'Pohjois-Karjala', 62.601, 29.7636], ['Vaasa', 'Pohjanmaa', 63.096, 21.6158],
-    ['Rovaniemi', 'Lappi', 66.5039, 25.7294], ['Kajaani', 'Kainuu', 64.2222, 27.7278], ['Inari', 'Lappi', 68.9058, 27.0288],
-    ['Utsjoki', 'Lappi', 69.9078, 27.0286], ['Mikkeli', 'Etelä-Savo', 61.6886, 27.2723], ['Kotka', 'Kymenlaakso', 60.4664, 26.9458],
-  ].map(([name, detail, lat, lon]) => ({ name, detail: detail + ', Suomi', lat, lon }));
+    ['Helsinki', 'Uusimaa', 60.1699, 24.9384, 658000], ['Espoo', 'Uusimaa', 60.2052, 24.6522, 305000], ['Vantaa', 'Uusimaa', 60.2934, 25.0378, 240000],
+    ['Tampere', 'Pirkanmaa', 61.4978, 23.761, 250000], ['Turku', 'Varsinais-Suomi', 60.4518, 22.2666, 200000], ['Oulu', 'Pohjois-Pohjanmaa', 65.0121, 25.4651, 215000],
+    ['Jyväskylä', 'Keski-Suomi', 62.2426, 25.7473, 147000], ['Kuopio', 'Pohjois-Savo', 62.8924, 27.677, 124000], ['Lahti', 'Päijät-Häme', 60.9827, 25.6612, 121000],
+    ['Pori', 'Satakunta', 61.4851, 21.7974, 84000], ['Joensuu', 'Pohjois-Karjala', 62.601, 29.7636, 78000], ['Vaasa', 'Pohjanmaa', 63.096, 21.6158, 68000],
+    ['Rovaniemi', 'Lappi', 66.5039, 25.7294, 65000], ['Kajaani', 'Kainuu', 64.2222, 27.7278, 36000], ['Inari', 'Lappi', 68.9058, 27.0288, 550],
+    ['Utsjoki', 'Lappi', 69.9078, 27.0286, 250], ['Mikkeli', 'Etelä-Savo', 61.6886, 27.2723, 52000], ['Kotka', 'Kymenlaakso', 60.4664, 26.9458, 51000],
+    ['Hanko', 'Uusimaa', 59.8236, 22.9681, 8000], ['Nuuksio', 'Uusimaa', 60.3, 24.53, 0],
+  ].map(([name, detail, lat, lon, pop]) => ({ name, detail: detail + ', Suomi', lat, lon, pop: pop || null, cc: 'FI', fc: pop ? 'PPL' : 'PRK' }));
 
   const state = { place: null, data: null, selected: null, metric: 'mean', weekDays: 7, loading: 0 };
   let scene, chart;
 
   function readPlace() {
     const lat = parseFloat(params.get('lat')), lon = parseFloat(params.get('lon'));
-    if (isFinite(lat) && isFinite(lon)) return { name: params.get('name') || 'Valittu sijainti', lat, lon };
+    if (isFinite(lat) && isFinite(lon)) {
+      const p = { name: params.get('name') || 'Valittu sijainti', lat, lon };
+      if (params.has('pop')) p.pop = parseInt(params.get('pop'), 10) || null;
+      if (params.get('cc')) p.cc = params.get('cc');
+      return p;
+    }
     try {
       const s = JSON.parse(localStorage.getItem('gigasaa.place') || 'null');
       if (s && isFinite(s.lat) && isFinite(s.lon) && s.name) return s;
@@ -65,6 +72,8 @@
     try { localStorage.setItem('gigasaa.place', JSON.stringify(p)); } catch (e) { /* yksityinen tila tms. */ }
     const u = new URLSearchParams(location.search);
     u.set('name', p.name); u.set('lat', p.lat.toFixed(4)); u.set('lon', p.lon.toFixed(4));
+    if (p.pop !== undefined) u.set('pop', p.pop || 0); else u.delete('pop');
+    if (p.cc) u.set('cc', p.cc); else u.delete('cc');
     history.replaceState(null, '', '?' + u.toString());
   }
 
@@ -76,7 +85,7 @@
     $('main').classList.add('is-loading');
     if (!quiet) setStatus('');
     try {
-      const data = await WX.api.loadAll(place.lat, place.lon, DEMO);
+      const [data] = await Promise.all([WX.api.loadAll(place.lat, place.lon, DEMO), resolveMeta(place)]);
       if (my !== state.loading) return;
       state.data = data;
       if (!state.selected || state.selected < data.today || !quiet) state.selected = data.today;
@@ -90,6 +99,52 @@
     } finally {
       if (my === state.loading) $('main').classList.remove('is-loading');
     }
+  }
+
+  // ---------- paikan tiedot (väkiluku, maa) ----------
+  const km = (a, b) => {
+    const R = 6371, r = Math.PI / 180;
+    const dLat = (b.lat - a.lat) * r, dLon = (b.lon - a.lon) * r;
+    const h = Math.sin(dLat / 2) ** 2 + Math.cos(a.lat * r) * Math.cos(b.lat * r) * Math.sin(dLon / 2) ** 2;
+    return 2 * R * Math.asin(Math.sqrt(h));
+  };
+  /** Täydentää paikalle väkiluvun ja maakoodin hakemalla nimellä ja valitsemalla lähimmän osuman. */
+  async function resolveMeta(place) {
+    if (place.pop !== undefined && place.cc) return place;
+    let res = [];
+    try { res = DEMO ? [] : await WX.api.geocode(place.name); } catch (e) { /* ei haittaa */ }
+    if (!res.length) res = FALLBACK_PLACES.filter((p) => p.name.toLowerCase() === place.name.toLowerCase());
+    let best = null, bestD = Infinity;
+    res.forEach((r) => { const d = km(place, r); if (d < bestD) { bestD = d; best = r; } });
+    if (best && bestD < 40) {
+      if (place.pop === undefined) place.pop = best.pop;
+      if (!place.cc) place.cc = best.cc;
+      if (!place.fc) place.fc = best.fc;
+      if (place.geo) place.dist = bestD;
+    } else if (place.pop === undefined) {
+      place.pop = null;
+    }
+    return place;
+  }
+
+  function placeClass() {
+    const p = state.place, d = state.data;
+    const climate = d && d.climate;
+    return {
+      settlement: WX.place.settlement(p.pop, p.fc, p.dist),
+      style: WX.place.style(p.cc, p.lat, p.lon),
+      biome: climate ? climate.biome : WX.place.biomeFallback(p.lat),
+      climate,
+    };
+  }
+
+  function renderPlaceInfo() {
+    const c = placeClass(), L = WX.place.LABELS;
+    const clim = c.climate ? `${c.climate.code}-ilmasto (${WX.place.koppenLabel(c.climate.code)})` : L.biome[c.biome];
+    const el = $('placeInfo');
+    el.textContent = `${L.settlement[c.settlement]} · ${L.style[c.style]} · ${clim}`;
+    el.title = 'Taustakuvan maisema: asutuksen tiheys (DEGURBA-luokituksen väkilukurajoilla arvioituna), alue ja ' +
+      (c.climate ? 'Köppenin ilmastoluokka viimeisen vuoden säädatasta.' : 'leveyspiiristä arvioitu kasvillisuusvyöhyke.');
   }
 
   function setStatus(msg, retry) {
@@ -111,6 +166,7 @@
   }
 
   function renderAll() {
+    renderPlaceInfo();
     renderNow();
     renderWeek();
     renderHours();
@@ -442,7 +498,21 @@
       wind: d ? d.current.wind : 3,
       seed: WX.hashString(state.place ? state.place.name : 'gigasää'),
       season: null,
+      settlement: 'rural',
+      style: 'nordic',
+      biome: 'boreal',
+      evergreen: false,
+      ice: false,
     };
+    if (state.place && d) {
+      const c = placeClass();
+      Object.assign(s, { settlement: c.settlement, style: c.style, biome: c.biome });
+      if (c.climate) { s.evergreen = c.climate.Tc >= 10; s.ice = c.climate.code === 'EF'; }
+    }
+    const pick = (id, key) => $(id).value || params.get(key);
+    if (pick('pvSettle', 'settle')) s.settlement = pick('pvSettle', 'settle');
+    if (pick('pvStyle', 'region')) s.style = pick('pvStyle', 'region');
+    if (pick('pvBiome', 'biome')) { s.biome = pick('pvBiome', 'biome'); s.evergreen = false; s.ice = false; }
     const pv = $('pvScene').value || params.get('scene');
     const pt = $('pvTime').value || params.get('time');
     const ps = $('pvSeason').value || params.get('season');
@@ -460,7 +530,7 @@
     const input = $('q'), box = $('suggest');
     let items = [], active = -1, timer, seq = 0;
     const close = () => { box.hidden = true; input.setAttribute('aria-expanded', 'false'); active = -1; };
-    const choose = (p) => { close(); input.value = ''; input.blur(); state.selected = null; load({ name: p.name, lat: p.lat, lon: p.lon }); };
+    const choose = (p) => { close(); input.value = ''; input.blur(); state.selected = null; load({ name: p.name, lat: p.lat, lon: p.lon, pop: p.pop, cc: p.cc, fc: p.fc }); };
     const draw = () => {
       box.textContent = '';
       if (!items.length) { close(); return; }
@@ -529,10 +599,10 @@
       $('locate').classList.add('busy');
       navigator.geolocation.getCurrentPosition(async (pos) => {
         const { latitude: lat, longitude: lon } = pos.coords;
-        const name = (DEMO ? null : await WX.api.reverse(lat, lon)) || 'Oma sijainti';
+        const rev = (DEMO ? null : await WX.api.reverse(lat, lon)) || {};
         $('locate').classList.remove('busy');
         state.selected = null;
-        load({ name, lat, lon });
+        load({ name: rev.name || 'Oma sijainti', lat, lon, cc: rev.cc || undefined, geo: true });
       }, (err) => {
         $('locate').classList.remove('busy');
         setStatus(err.code === 1 ? 'Sijainnin käyttö estettiin selaimessa.' : 'Sijaintia ei saatu selvitettyä.');
@@ -544,12 +614,13 @@
   function init() {
     scene = new WX.PixelScene($('bg'));
     chart = new WX.YearChart($('chart'));
-    ['scene', 'time', 'season'].forEach((k) => {
-      const sel = $('pv' + k[0].toUpperCase() + k.slice(1));
+    const PV = { scene: 'pvScene', time: 'pvTime', season: 'pvSeason', settle: 'pvSettle', region: 'pvStyle', biome: 'pvBiome' };
+    Object.entries(PV).forEach(([k, id]) => {
+      const sel = $(id);
       if (params.get(k)) sel.value = params.get(k);
       sel.addEventListener('change', updateScene);
     });
-    if (params.get('scene') || params.get('time') || params.get('season')) document.querySelector('.preview').open = true;
+    if (Object.keys(PV).some((k) => params.get(k))) document.querySelector('.preview').open = true;
     updateScene();
     setupSearch();
     setupLocate();

@@ -125,13 +125,14 @@
   };
 
   demo.archiveRaw = async function (lat, lon, start, end) {
-    const D = { time: [], temperature_2m_mean: [], temperature_2m_max: [], temperature_2m_min: [] };
+    const D = { time: [], temperature_2m_mean: [], temperature_2m_max: [], temperature_2m_min: [], precipitation_sum: [] };
     for (let ms = Date.parse(start); ms <= Date.parse(end); ms += DAY) {
       const m = clim(new Date(ms), lat) + anomaly(ms, 7);
       D.time.push(fmt(new Date(ms)).slice(0, 10));
       D.temperature_2m_mean.push(r1(m));
       D.temperature_2m_max.push(r1(m + 2.6));
       D.temperature_2m_min.push(r1(m - 2.4));
+      D.precipitation_sum.push(r1(Math.max(0, 1.9 + 2.2 * Math.sin(ms / DAY * 0.9) + 1.2 * Math.sin(ms / DAY / 58))));
     }
     return { daily: D };
   };

@@ -2,7 +2,8 @@
 
 Sääsivu IS Supersään hengessä. Mukana nykyhetki, päivän ja viikon sää sekä lämpötilavertailu
 viime vuoteen. Taustalla on 16-bittisten JRPG-pelien (Final Fantasy V -tyyli) henkeen piirretty
-pikseligrafiikkamaisema, joka vaihtuu vallitsevan sään, vuorokaudenajan ja vuodenajan mukaan.
+pikseligrafiikkamaisema. Se vaihtuu vallitsevan sään, vuorokaudenajan ja vuodenajan mukaan sekä
+paikan asutuksen, maanosan ja ilmaston mukaan.
 
 ## Ominaisuudet
 
@@ -18,6 +19,19 @@ pikseligrafiikkamaisema, joka vaihtuu vallitsevan sään, vuorokaudenajan ja vuo
   Säätila tuo mukaan pilvet, sateen, lumen, ukkosen tai sumun. Vuorokaudenajat ovat päivä, hämärä
   ja yö (kuu ja tähdet), ja vuodenajat kevät, kesä, ruska, myöhäissyksy ja talvi (lumi ja jäätynyt
   järvi). Maisema arvotaan paikkakunnan nimen perusteella, joten jokaisella paikalla on oma maisemansa.
+- **Sijainnin mukainen maisema** (paikan nimen alla näkyy, mihin luokkiin paikka kuuluu):
+  - **Asutus** DEGURBA-luokituksen väkilukurajoilla: kaupunki (≥ 50 000 as.) näyttää siluetin,
+    TV-tornin, nosturit ja lentoestevalot. Pikkukaupunki tai taajama (≥ 5 000) on yhtenäinen talorivi
+    maamerkin ja katuvalojen kanssa, kylä (≥ 500) muutama talo ja kirkko, haja-asutus pelkkä mökki.
+    Kaupungissa valosaaste himmentää tähtitaivaan.
+  - **Alue** määrää rakennustyylin: Pohjola (punamullatut puutalot, puukirkko), muu Eurooppa
+    (tiilikatot, kirkko), Pohjois-Amerikka (latot, siilot, vesitornit), Etelä-Amerikka (värikkäät
+    talot), Itä-Aasia (kaarevat katot, pagodi, neonvalot), Länsi- ja Etelä-Aasia (tasakatot,
+    kupolirakennus), Afrikka (pyöreät majat kylissä), Oseania (peltikatot) ja Antarktis (tutkimusasema).
+  - **Kasvillisuus** tulee Köppenin ilmastoluokasta, joka lasketaan paikan viimeisen vuoden
+    säädatasta: tundra, taiga, havu- ja sekametsä, lehtimetsä, subtrooppinen metsä, välimeren
+    kasvillisuus, aro, aavikko, savanni tai sademetsä. Vyöhyke vaikuttaa maastoon (tunturit, kukkulat,
+    mesat, dyynit, jyrkät huiput), puulajeihin, maan väriin ja vesistöön.
 - **Paikkahaku** ja **oma sijainti** (selaimen paikannus).
 
 ## Käyttö
@@ -35,10 +49,14 @@ Avaa sitten <http://localhost:8000/>. Sivun voi julkaista sellaisenaan esimerkik
 | Parametri | Esimerkki | Selitys |
 |---|---|---|
 | `name`, `lat`, `lon` | `?name=Oulu&lat=65.01&lon=25.47` | Näytettävä paikka. Viimeisin paikka muistetaan myös selaimessa. |
+| `pop`, `cc` | `&pop=215000&cc=FI` | Paikan väkiluku ja maakoodi. Ne lisätään automaattisesti; jos ne puuttuvat, ne haetaan paikan nimellä. |
 | `demo` | `?demo=1` | Synteettinen demodata, joka toimii ilman verkkoyhteyttä. |
 | `scene` | `?scene=snow` | Taustan esikatselu: `clear`, `partly`, `cloudy`, `fog`, `drizzle`, `rain`, `heavyrain`, `sleet`, `snow`, `heavysnow`, `thunder` |
 | `time` | `?time=night` | Taustan vuorokaudenaika: `day`, `dusk`, `night` |
 | `season` | `?season=winter` | Taustan vuodenaika: `spring`, `summer`, `autumn`, `late`, `winter` |
+| `settle` | `?settle=city` | Taustan asutus: `rural`, `village`, `town`, `city` |
+| `region` | `?region=eastasia` | Taustan rakennustyyli: `nordic`, `europe`, `namerica`, `samerica`, `eastasia`, `westasia`, `africa`, `oceania`, `antarctica` |
+| `biome` | `?biome=desert` | Taustan kasvillisuus: `tundra`, `taiga`, `boreal`, `temperate`, `subtropical`, `mediterranean`, `steppe`, `desert`, `savanna`, `rainforest` |
 
 Samat taustavalinnat löytyvät sivun alalaidan kohdasta **Taustan esikatselu**.
 
@@ -53,8 +71,18 @@ Kaikki säätiedot tulevat [Open-Meteosta](https://open-meteo.com/) (CC BY 4.0, 
   10–90 %:n vaihteluväli. Parviennusteen harha korjataan vertaamalla sitä päivien +6…+15
   pääennusteeseen.
 - **Viime vuosi** (`archive-api.open-meteo.com`, ERA5-uusanalyysi): sama ajanjakso vuotta aiemmin.
-- **Paikkahaku**: Open-Meteo Geocoding API. Oman sijainnin nimen hakee BigDataCloudin
-  ilmainen käänteisgeokoodaus.
+  Samalla haulla saadaan myös viimeisen vuoden päivälämpötilat ja sademäärät. Niistä lasketaan
+  Köppenin ilmastoluokka (Peel ym. 2007), joka määrää taustan kasvillisuuden.
+- **Paikkahaku**: Open-Meteo Geocoding API, joka antaa myös paikan väkiluvun (GeoNames) ja
+  maakoodin. Oman sijainnin nimen ja maan hakee BigDataCloudin ilmainen käänteisgeokoodaus.
+
+### Asutusluokan arviointi
+
+Virallinen DEGURBA-luokitus (Eurostat ja GHSL) perustuu 1 km²:n väestöruutuihin. Sitä ei voi kysyä
+selaimesta ilman isoja aineistoja, joten Gigasää arvioi luokan DEGURBAn väkilukurajoilla paikan
+väkiluvusta: kaupunkikeskus ≥ 50 000, kaupunkiklusteri ≥ 5 000, kylä ≥ 500 asukasta. Kun sijainti
+on haettu paikannuksella ja se on kaukana taajaman keskustasta, luokkaa pudotetaan (esim. kaupungin
+laidalta tulee pikkukaupunki ja metsästä haja-asutusalue).
 
 Jos pitkä ennuste tai viime vuoden data ei ole saatavilla, sivu toimii silti, ja kaavion alla
 kerrotaan, mitä puuttuu.
@@ -65,6 +93,7 @@ kerrotaan, mitä puuttuu.
 index.html          sivun rakenne
 css/style.css       tyylit (JRPG-henkiset ikkunat)
 js/weathercodes.js  WMO-säätilakoodit → suomenkielinen kuvaus, symboli, taustan säätila
+js/place.js         paikan luokittelu: asutus (DEGURBA-arvio), alue/rakennustyyli, Köppenin ilmastoluokka
 js/icons.js         pikseligrafiikkaiset sääsymbolit, osoitinkäsi ja tuulinuoli (piirretään koodilla)
 js/pixelbg.js       pikseligrafiikkatausta (canvas, matala resoluutio, Bayer-ditteröinti)
 js/api.js           Open-Meteo-haut ja datan jäsentäminen
