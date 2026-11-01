@@ -207,7 +207,38 @@ main.is-loading { opacity: 0.6; }
 .place { margin: 0; font-family: var(--display); font-size: 48px; font-weight: 400; line-height: 1; letter-spacing: 0.02em; }
 .place-info { margin: 4px 0 0; font-size: 14px; color: var(--ink); cursor: help; }
 .greeting { margin: 8px 0 0; font-size: 20px; color: var(--gold); }
-.hero-main { display: flex; align-items: center; gap: 12px; margin-top: 6px; }
+.hero-main { position: relative; display: flex; align-items: center; gap: 12px; margin-top: 6px; }
+/* Maan maskotti sääsymbolin vasemmalla puolella */
+.mascot { flex: none; align-self: flex-end; margin: 0 0 0 -6px; padding: 0; background: none; border: 0; line-height: 0; cursor: pointer; }
+.mascot canvas { width: 104px; height: 120px; image-rendering: crisp-edges; image-rendering: pixelated; filter: drop-shadow(3px 3px 0 rgba(10, 12, 40, 0.45)); }
+.mascot:focus-visible { outline: 3px solid var(--gold); outline-offset: 2px; }
+.bubble {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 10px);
+  z-index: 4;
+  max-width: min(300px, 80vw);
+  background: linear-gradient(180deg, var(--win-mid), var(--win-bot));
+  border: 2px solid var(--win-border);
+  border-radius: 6px;
+  box-shadow: 0 0 0 2px var(--win-edge);
+  padding: 6px 10px;
+  font-size: 16px;
+  line-height: 1.3;
+  text-shadow: 2px 2px 0 var(--shadow);
+}
+.bubble::after {
+  content: '';
+  position: absolute;
+  left: 44px;
+  bottom: -7px;
+  width: 10px;
+  height: 10px;
+  background: var(--win-bot);
+  border-right: 2px solid var(--win-border);
+  border-bottom: 2px solid var(--win-border);
+  transform: rotate(45deg);
+}
 .hero-icon { width: 120px; height: 120px; filter: drop-shadow(3px 3px 0 rgba(10, 12, 40, 0.6)); }
 .hero-temp { font-family: var(--display); font-size: 120px; line-height: 0.85; }
 .hero-desc { font-size: 24px; margin-top: 6px; }
@@ -415,8 +446,10 @@ main.is-loading { opacity: 0.6; }
   #scenic { margin-left: auto; }
   .hero { min-height: 220px; }
   .place { font-size: 40px; }
-  .hero-icon { width: 96px; height: 96px; }
-  .hero-temp { font-size: 96px; }
+  .hero-main { gap: 8px; }
+  .mascot canvas { width: 78px; height: 90px; }
+  .hero-icon { width: 72px; height: 72px; }
+  .hero-temp { font-size: 88px; }
   .window { padding: 12px 12px 14px; }
   .window h2 { font-size: 28px; }
   .day { grid-template-columns: 32px minmax(60px, 1fr) 48px 44px 40px 60px; gap: 5px; padding: 4px 2px; }

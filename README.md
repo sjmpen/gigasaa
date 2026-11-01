@@ -60,6 +60,17 @@ paikan asutuksen, maanosan ja ilmaston mukaan.
   ja vaihtavat paikkaa, kun sivua vieritetään.
 - **Maisematila**: yläpalkin maisemapainike piilottaa sääikkunat, jolloin koko taustamaisema
   eläimineen näkyy myös puhelimella. Takaisin pääsee samasta painikkeesta tai Esc-näppäimellä.
+- **Maan maskotti** seisoo sääsymbolin vasemmalla puolella.
+  - Hahmo on maan kansalliseläin, jolla on maan lipun värinen kaulahuivi. Esimerkiksi Suomella on
+    karhu, Ruotsilla hirvi, Yhdysvalloilla valkopäämerikotka, Kiinalla panda, Ranskalla kukko,
+    Australialla kenguru ja Uudella-Seelannilla kiivi.
+  - Kansalliseläin on määritelty noin 60 maalle. Muilla maskottina on Gigasään oma pilvihahmo maan
+    väreissä. Lippujen värit on määritelty noin 200 maalle.
+  - Maskotti räpyttelee, heiluttaa, osoittaa säätä ja hyppää.
+  - Se reagoi säähän (sateenvarjo, pipo, aurinkolasit, hikipisara, palelu, nukkuu öisin) ja
+    juhlapäiviin (tonttulakki, ylioppilaslakki, kukkaseppele, juhlahattu, lippu liputuspäivinä).
+  - Klikkaamalla se kommentoi säätä puhekuplassa.
+  - Kansallispukuja ja muita kansallisia stereotypioita on tarkoituksella vältetty.
 - **Paikkahaku** ja **oma sijainti** (selaimen paikannus).
 
 ## Käyttö
@@ -90,6 +101,7 @@ Avaa sitten <http://localhost:8000/>. Sivun voi julkaista sellaisenaan esimerkik
 | `kp` | `?kp=5` | Revontulien Kp-indeksi |
 | `wind` | `?wind=14` | Tuulen nopeus m/s (puiden huojunta, liput) |
 | `event` | `?event=juhannus` | Tapahtuma: `juhannus`, `vappu`, `joulu`, `uusivuosi`, `itsenaisyyspaiva`, `halloween`, `liputus` |
+| `mascot` | `?mascot=moose` | Maskotin hahmo (esim. `bear`, `moose`, `baldeagle`, `panda`, `rooster`, `kangaroo`, `kiwi`, `cloud`) |
 
 Samat taustavalinnat löytyvät sivun alalaidan kohdasta **Taustan esikatselu**.
 
@@ -139,6 +151,7 @@ js/weathercodes.js  WMO-säätilakoodit → suomenkielinen kuvaus, symboli, taus
 js/place.js         paikan luokittelu: asutus (DEGURBA-arvio), alue/rakennustyyli, Köppenin ilmastoluokka
 js/astro.js         auringon ja kuun paikka, kuun vaihe, geomagneettinen leveys ja revontulten näkyvyys
 js/events.js        juhlapyhät, tapahtumat ja Suomen liputuspäivät
+js/mascot.js        maan maskotti: kansalliseläinhahmot, lippujen värit, animaatiot ja asusteet
 js/icons.js         pikseligrafiikkaiset sääsymbolit, osoitinkäsi ja tuulinuoli (piirretään koodilla)
 js/pixelbg.js       pikseligrafiikkatausta (canvas, matala resoluutio, Bayer-ditteröinti)
 js/api.js           Open-Meteo-haut ja datan jäsentäminen

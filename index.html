@@ -36,6 +36,10 @@
         <h1 id="place" class="place">&nbsp;</h1>
         <p id="placeInfo" class="place-info"></p>
         <div class="hero-main">
+          <button id="mascotBtn" class="mascot" type="button" aria-label="Maskotti">
+            <canvas id="mascot" width="26" height="30"></canvas>
+          </button>
+          <div id="mascotBubble" class="bubble" role="status" hidden></div>
           <img id="nowIcon" class="px hero-icon" alt="" width="120" height="120">
           <div>
             <div id="nowTemp" class="hero-temp">–</div>
@@ -205,6 +209,11 @@
               <option value="14">14 m/s</option>
             </select>
           </label>
+          <label>Maskotti
+            <select id="pvMascot">
+              <option value="">Todellinen</option>
+            </select>
+          </label>
           <label>Tapahtuma
             <select id="pvEvent">
               <option value="">Todellinen</option>
@@ -231,6 +240,7 @@
   <script src="js/api.js"></script>
   <script src="js/demo.js"></script>
   <script src="js/chart.js"></script>
+  <script src="js/mascot.js"></script>
   <script src="js/app.js"></script>
 </body>
 </html>
