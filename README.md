@@ -8,7 +8,8 @@ paikan asutuksen, maanosan ja ilmaston mukaan.
 ## Ominaisuudet
 
 - **Nyt**: lämpötila, sääsymboli, tuntuu kuin -lämpötila, tuuli ja puuskat, kosteus, ilmanpaine,
-  pilvisyys, päivän sademäärä, auringonnousu ja -lasku.
+  pilvisyys, päivän sademäärä, auringonnousu ja -lasku, kuun vaihe sekä tarvittaessa lumensyvyys,
+  aallonkorkeus ja revontulten todennäköisyys.
 - **Päivän sää**: tuntiennuste seuraaville 24 tunnille, mukana lämpötilakäyrä, sade ja tuuli.
   Viikkolistan päivää klikkaamalla näet sen päivän tunnit.
 - **Viikon sää**: 7 päivää (tai 14 päivää), ylin ja alin lämpötila, vaihteluväli, sade ja tuuli.
@@ -32,6 +33,29 @@ paikan asutuksen, maanosan ja ilmaston mukaan.
     säädatasta: tundra, taiga, havu- ja sekametsä, lehtimetsä, subtrooppinen metsä, välimeren
     kasvillisuus, aro, aavikko, savanni tai sademetsä. Vyöhyke vaikuttaa maastoon (tunturit, kukkulat,
     mesat, dyynit, jyrkät huiput), puulajeihin, maan väriin ja vesistöön.
+- **Taivas ja luonto todellisen datan mukaan**:
+  - **Aurinko ja kuu** näkyvät oikeilla paikoillaan taivaalla (korkeus ja suunta lasketaan kellonajasta
+    ja sijainnista). Taivaan väri muuttuu liukuvasti auringon korkeuden mukaan, joten kaamos ja
+    yötön yö näkyvät oikein. Kuu piirretään oikeassa vaiheessaan, ja kalpea päiväkuu näkyy myös päivällä.
+  - **Revontulet** näkyvät kirkkaina öinä, kun NOAA:n Kp-indeksi ja paikan geomagneettinen
+    leveysaste riittävät. Voimakkailla revontulilla verhojen yläosa muuttuu violetiksi.
+  - **Lumi ja jää**: maassa on lunta, kun lumensyvyys on vähintään 1 cm. Järven jäätila (avoin,
+    rantajää, jäässä) lasketaan viimeisten noin 150 päivän pakkasvuorokausista, merelle korkeammilla
+    rajoilla.
+  - **Meri vai järvi**: jos merenranta on 5 km säteellä, toisella laidalla on avomeri, saari ja
+    majakka, joka vilkkuu öisin. Aallonharjojen määrä riippuu aallonkorkeudesta, ja rannikolla
+    lentää lokkeja.
+  - **Korkeuserot** lähiseudun maastosta: tasaisella maalla matalat kukkulat, tuntureilla
+    pyöreät tunturit ja yli 900 m:n korkeuseroilla jyrkät alppihuiput. Huiput ovat lumisia, jos
+    ne yltävät lumirajan yläpuolelle.
+  - **Tuuli** heiluttaa etualan puita ja liputtaa mökin viiriä tuulen suuntaan. Sade, lumi,
+    savu ja pilvet kulkevat samaan suuntaan.
+- **Juhlapyhät**: juhannuskokko vastarannalla ja siniristilippu salossa, vapun ilmapallot,
+  jouluvalot mökin räystäällä ja kuusessa, uudenvuoden ilotulitus, itsenäisyyspäivän kaksi
+  kynttilää ikkunalla ja halloween-kurpitsa. Suomen liputuspäivinä mökin tangossa on lippu, muulloin
+  viiri. Juhlapäivän toivotus näkyy säätietojen alla.
+- **Eläimet**: porot Lapissa, kamelit aavikolla, kirahvi savannilla, kenguru Australiassa,
+  sorsat kesäjärvellä, lokit merenrannalla ja muuttolintujen aurat keväällä ja syksyllä.
 - **Paikkahaku** ja **oma sijainti** (selaimen paikannus).
 
 ## Käyttö
@@ -57,6 +81,11 @@ Avaa sitten <http://localhost:8000/>. Sivun voi julkaista sellaisenaan esimerkik
 | `settle` | `?settle=city` | Taustan asutus: `rural`, `village`, `town`, `city` |
 | `region` | `?region=eastasia` | Taustan rakennustyyli: `nordic`, `europe`, `namerica`, `samerica`, `eastasia`, `westasia`, `africa`, `oceania`, `antarctica` |
 | `biome` | `?biome=desert` | Taustan kasvillisuus: `tundra`, `taiga`, `boreal`, `temperate`, `subtropical`, `mediterranean`, `steppe`, `desert`, `savanna`, `rainforest` |
+| `coast` | `?coast=1` | Meri (`1`) tai järvi (`0`) |
+| `relief` | `?relief=1800` | Maaston korkeusero metreinä (esim. `30`, `400`, `1800`) |
+| `kp` | `?kp=5` | Revontulien Kp-indeksi |
+| `wind` | `?wind=14` | Tuulen nopeus m/s (puiden huojunta, liput) |
+| `event` | `?event=juhannus` | Tapahtuma: `juhannus`, `vappu`, `joulu`, `uusivuosi`, `itsenaisyyspaiva`, `halloween`, `liputus` |
 
 Samat taustavalinnat löytyvät sivun alalaidan kohdasta **Taustan esikatselu**.
 
@@ -75,6 +104,16 @@ Kaikki säätiedot tulevat [Open-Meteosta](https://open-meteo.com/) (CC BY 4.0, 
   Köppenin ilmastoluokka (Peel ym. 2007), joka määrää taustan kasvillisuuden.
 - **Paikkahaku**: Open-Meteo Geocoding API, joka antaa myös paikan väkiluvun (GeoNames) ja
   maakoodin. Oman sijainnin nimen ja maan hakee BigDataCloudin ilmainen käänteisgeokoodaus.
+- **Taustan ympäristötiedot** haetaan sivun latauduttua, joten ne eivät hidasta sääsivua. Jos
+  jokin haku epäonnistuu, käytetään oletusarvoja.
+  - Lumensyvyys tulee Open-Meteon tuntiennusteesta (`snow_depth`).
+  - Kp-indeksi: [NOAA SWPC](https://www.swpc.noaa.gov/), välimuisti 15 min.
+  - Merenranta: OpenStreetMapin `natural=coastline` [Overpass API:n](https://overpass-api.de/)
+    kautta. Tulos tallennetaan selaimeen paikkakohtaisesti.
+  - Aallonkorkeus: Open-Meteo Marine API.
+  - Korkeuserot: Open-Meteo Elevation API, 17 pistettä (keskusta sekä 10 ja 25 km:n kehä).
+  - Auringon ja kuun paikat sekä kuun vaihe lasketaan selaimessa tavanomaisilla matalan
+    tarkkuuden kaavoilla.
 
 ### Asutusluokan arviointi
 
@@ -94,6 +133,8 @@ index.html          sivun rakenne
 css/style.css       tyylit (JRPG-henkiset ikkunat)
 js/weathercodes.js  WMO-säätilakoodit → suomenkielinen kuvaus, symboli, taustan säätila
 js/place.js         paikan luokittelu: asutus (DEGURBA-arvio), alue/rakennustyyli, Köppenin ilmastoluokka
+js/astro.js         auringon ja kuun paikka, kuun vaihe, geomagneettinen leveys ja revontulten näkyvyys
+js/events.js        juhlapyhät, tapahtumat ja Suomen liputuspäivät
 js/icons.js         pikseligrafiikkaiset sääsymbolit, osoitinkäsi ja tuulinuoli (piirretään koodilla)
 js/pixelbg.js       pikseligrafiikkatausta (canvas, matala resoluutio, Bayer-ditteröinti)
 js/api.js           Open-Meteo-haut ja datan jäsentäminen
@@ -108,3 +149,4 @@ fonts/              DotGothic16 ja Jersey 10 (SIL Open Font License)
 - Graafinen viimeistely: käsin piirretyt sprite-sheetit sääsymboleille ja maisemalle.
 - Siirtymäanimaatio, kun sää tai paikka vaihtuu.
 - Varoitukset (esim. Ilmatieteen laitoksen avoin data) ja sadetutka.
+- Ilmanlaatu tai siitepöly näkyviin utuna taustassa.

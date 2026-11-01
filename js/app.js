@@ -88,10 +88,18 @@
       const [data] = await Promise.all([WX.api.loadAll(place.lat, place.lon, DEMO), resolveMeta(place)]);
       if (my !== state.loading) return;
       state.data = data;
+      if (!quiet) state.env = null;
       if (!state.selected || state.selected < data.today || !quiet) state.selected = data.today;
       renderAll();
       savePlace(place);
       setStatus('');
+      // ympäristötiedot (Kp, ranta, aallot, korkeuserot) tulevat perässä eivätkä hidasta sivua
+      WX.api.loadEnv(place.lat, place.lon, DEMO).then((env) => {
+        if (my !== state.loading) return;
+        state.env = env;
+        renderNow();
+        updateScene();
+      });
     } catch (e) {
       if (my !== state.loading) return;
       console.error(e);
@@ -212,7 +220,22 @@
     } else if (today) {
       add('Aurinko', c.isDay ? 'Ei laske (yötön yö)' : 'Ei nouse (kaamos)');
     }
+    // kuu, lumi, aallot ja revontulet
+    const p = state.place, env = state.env || {};
+    const a = WX.astro.position(Date.now(), p.lat, p.lon);
+    add('Kuu', `${WX.astro.moonName(a.moon.phase)} ${Math.round(a.moon.fraction * 100)}\u00a0%`);
+    if (c.snowDepth > 0.005) add('Lumensyvyys', `${Math.round(c.snowDepth * 100)} cm`);
+    if (env.waves != null) add('Aallonkorkeus', `${F.num1(env.waves)} m`);
+    if (env.kp != null && (Math.abs(WX.astro.geomagLat(p.lat, p.lon)) >= 50 || env.kp >= 6)) {
+      const st = WX.astro.auroraStrength(env.kp, p.lat, p.lon);
+      let txt = st < 0.15 ? 'epätodennäköisiä' : st < 0.5 ? 'mahdollisia' : 'todennäköisiä';
+      if (st >= 0.15) txt += a.sun.alt > -6 ? ' pimeällä' : c.cloud >= 80 ? ' (pilvistä)' : '';
+      add('Revontulet', `${txt}, Kp\u00a0${F.num1(env.kp)}`);
+    }
     add('Päivitetty', `klo ${F.hm(c.time)}${DEMO ? ' (demo)' : ''}`);
+    const ev = currentEvents();
+    $('greeting').textContent = ev.greeting || '';
+    $('greeting').hidden = !ev.greeting;
   }
 
   function arrow(dir) {
@@ -478,49 +501,104 @@
   }
 
   // ---------- tausta ----------
-  function phaseOf(d) {
-    const today = dayOf(d.today), t = d.now.getTime();
-    if (!today || !today.sunrise || !today.sunset) return d.current.isDay ? 'day' : 'night';
-    const sr = today.sunrise.getTime(), ss = today.sunset.getTime(), M = 60000;
-    if (t < sr - 40 * M || t > ss + 40 * M) return 'night';
-    if (t < sr + 45 * M || t > ss - 45 * M) return 'dusk';
-    return 'day';
+  /** Vuorokaudenvaihe auringon korkeudesta: päivä ≥ 6°, hämärä ≥ −8°, muuten yö. */
+  const phaseFromSun = (alt) => (alt >= 6 ? 'day' : alt >= -8 ? 'dusk' : 'night');
+
+  /** Auringon ja kuun tiedot nyt (tai esikatselun vuorokaudenajalla). */
+  function skyNow(lat, lon, previewTime) {
+    const a = WX.astro.position(Date.now(), lat, lon);
+    const south = lat < 0;
+    const r = {
+      sunAlt: a.sun.alt, sunAz: a.sun.az, moonAlt: a.moon.alt, moonAz: a.moon.az,
+      moonPhase: a.moon.phase, moonFrac: a.moon.fraction,
+    };
+    if (previewTime) {
+      const P = { day: [35, 20], dusk: [4.5, 50], night: [-25, 0] }[previewTime] || [35, 20];
+      r.sunAlt = P[0];
+      r.sunAz = (south ? 0 : 180) + P[1] * (south ? -1 : 1);
+      if (previewTime === 'night' && r.moonAlt < 10) { r.moonAlt = 30; r.moonAz = south ? 40 : 140; }
+    }
+    r.phase = phaseFromSun(r.sunAlt);
+    return r;
+  }
+
+  /** Jäätilanne pakkasvuorokausista (viimeiset ~150 päivää): open / partial / frozen. */
+  function iceState(d, sea) {
+    const today = parseLocal(d.today);
+    const byDate = {};
+    d.daily.forEach((x) => (byDate[x.date] = x));
+    let fdd = 0, n = 0;
+    for (let o = -150; o <= 0; o++) {
+      const ds = iso(addDays(today, o));
+      let t = byDate[ds] && byDate[ds].tmean != null ? byDate[ds].tmean : null;
+      if (t == null && d.lastYear && d.lastYear[ds]) t = d.lastYear[ds].mean;
+      if (t == null) continue;
+      n++;
+      fdd = t < 0 ? Math.min(600, fdd - t) : Math.max(0, fdd - t * 1.5); // sulaminen nopeampaa kuin jäätyminen
+    }
+    if (n < 20) return null;
+    const k = sea ? 2.5 : 1;
+    return fdd >= 30 * k ? 'frozen' : fdd >= 8 * k ? 'partial' : 'open';
+  }
+
+  function currentEvents() {
+    const d = state.data, p = state.place;
+    if (!d || !p) return { fx: {}, flag: null, greeting: null };
+    const pe = $('pvEvent').value || params.get('event');
+    const style = ($('pvStyle').value || params.get('region')) || placeClass().style;
+    return WX.events.active(d.now, p.cc, style, pe);
   }
 
   function updateScene() {
-    const d = state.data;
-    const s = {
+    const d = state.data, p = state.place, env = state.env || {};
+    const lat = p ? p.lat : 60, lon = p ? p.lon : 25;
+    const pt = $('pvTime').value || params.get('time');
+    const sky = skyNow(lat, lon, pt);
+    const s = Object.assign({
       code: d ? d.current.code : 2,
-      phase: d ? phaseOf(d) : 'day',
       temp: d ? d.current.temp : 10,
       month: d ? d.now.getUTCMonth() + 1 : new Date().getMonth() + 1,
-      lat: state.place ? state.place.lat : 60,
+      lat,
       wind: d ? d.current.wind : 3,
-      seed: WX.hashString(state.place ? state.place.name : 'gigasää'),
+      windDir: d ? d.current.windDir : 270,
+      seed: WX.hashString(p ? p.name : 'gigasää'),
       season: null,
       settlement: 'rural',
       style: 'nordic',
       biome: 'boreal',
       evergreen: false,
       ice: false,
-    };
-    if (state.place && d) {
+      cc: p ? p.cc : null,
+      snowDepth: d ? d.current.snowDepth : null,
+      iceState: null,
+      coast: env.coast != null ? env.coast : null,
+      waves: env.waves,
+      relief: env.relief ? env.relief.relief : null,
+      peak: env.relief ? env.relief.peak : null,
+      aurora: env.kp != null ? WX.astro.auroraStrength(env.kp, lat, lon) : 0,
+      ev: currentEvents(),
+    }, sky);
+    if (p && d) {
       const c = placeClass();
       Object.assign(s, { settlement: c.settlement, style: c.style, biome: c.biome });
       if (c.climate) { s.evergreen = c.climate.Tc >= 10; s.ice = c.climate.code === 'EF'; }
+      s.iceState = iceState(d, env.coast === true);
     }
     const pick = (id, key) => $(id).value || params.get(key);
     if (pick('pvSettle', 'settle')) s.settlement = pick('pvSettle', 'settle');
     if (pick('pvStyle', 'region')) s.style = pick('pvStyle', 'region');
     if (pick('pvBiome', 'biome')) { s.biome = pick('pvBiome', 'biome'); s.evergreen = false; s.ice = false; }
+    if (pick('pvCoast', 'coast')) s.coast = pick('pvCoast', 'coast') === '1';
+    if (pick('pvKp', 'kp')) s.aurora = WX.astro.auroraStrength(parseFloat(pick('pvKp', 'kp')), lat, lon);
+    if (pick('pvWind', 'wind')) s.wind = parseFloat(pick('pvWind', 'wind'));
+    if (pick('pvRelief', 'relief')) { s.relief = parseFloat(pick('pvRelief', 'relief')); s.peak = s.relief * 2.2; }
     const pv = $('pvScene').value || params.get('scene');
-    const pt = $('pvTime').value || params.get('time');
     const ps = $('pvSeason').value || params.get('season');
     if (pv && WX.PRESETS[pv] != null) s.code = WX.PRESETS[pv];
-    if (pt) s.phase = pt;
     if (ps) s.season = ps;
     if (s.season === 'winter' && s.temp > 0) s.temp = -4;
     if (s.season && s.season !== 'winter' && s.temp < 2) s.temp = 8;
+    if (s.season || pv) { s.snowDepth = null; s.iceState = null; }
     document.body.dataset.phase = s.phase;
     scene.set(s);
   }
@@ -612,13 +690,13 @@
 
   // ---------- käynnistys ----------
   function init() {
-    scene = new WX.PixelScene($('bg'));
+    scene = WX.scene = new WX.PixelScene($('bg'));
     chart = new WX.YearChart($('chart'));
-    const PV = { scene: 'pvScene', time: 'pvTime', season: 'pvSeason', settle: 'pvSettle', region: 'pvStyle', biome: 'pvBiome' };
+    const PV = { scene: 'pvScene', time: 'pvTime', season: 'pvSeason', settle: 'pvSettle', region: 'pvStyle', biome: 'pvBiome', coast: 'pvCoast', kp: 'pvKp', event: 'pvEvent', wind: 'pvWind', relief: 'pvRelief' };
     Object.entries(PV).forEach(([k, id]) => {
       const sel = $(id);
       if (params.get(k)) sel.value = params.get(k);
-      sel.addEventListener('change', updateScene);
+      sel.addEventListener('change', () => { updateScene(); if (state.data && k === 'event') renderNow(); });
     });
     if (Object.keys(PV).some((k) => params.get(k))) document.querySelector('.preview').open = true;
     updateScene();
@@ -642,6 +720,7 @@
     let lastLoad = Date.now();
     const refresh = () => { if (state.place && Date.now() - lastLoad > 14 * 60000) { lastLoad = Date.now(); load(state.place, true); } };
     setInterval(refresh, 60000);
+    setInterval(() => { if (state.data && !document.hidden) updateScene(); }, 5 * 60000);
     document.addEventListener('visibilitychange', () => { if (!document.hidden) refresh(); });
   }
 

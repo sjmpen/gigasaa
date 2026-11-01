@@ -40,6 +40,7 @@
           </div>
         </div>
         <div id="nowMeta" class="hero-meta"></div>
+        <p id="greeting" class="greeting" hidden></p>
       </section>
 
       <section class="window now" aria-label="Sää nyt">
@@ -93,7 +94,7 @@
     </main>
 
     <footer class="footer">
-      <p>Säädata: <a href="https://open-meteo.com/" rel="noopener">Open-Meteo.com</a> (CC BY 4.0) – ennustemallit, GFS-parviennuste ja ERA5-uusanalyysi. Fontit: DotGothic16 ja Jersey 10 (OFL).</p>
+      <p>Säädata: <a href="https://open-meteo.com/" rel="noopener">Open-Meteo.com</a> (CC BY 4.0) – ennustemallit, GFS-parviennuste, ERA5-uusanalyysi, meri- ja korkeusdata. Kp-indeksi: <a href="https://www.swpc.noaa.gov/" rel="noopener">NOAA SWPC</a>. Rantaviiva: © <a href="https://www.openstreetmap.org/copyright" rel="noopener">OpenStreetMap-tekijät</a> (ODbL). Fontit: DotGothic16 ja Jersey 10 (OFL).</p>
       <details class="preview">
         <summary>Taustan esikatselu</summary>
         <div class="preview-row">
@@ -169,6 +170,50 @@
               <option value="rainforest">Sademetsä</option>
             </select>
           </label>
+          <label>Ranta
+            <select id="pvCoast">
+              <option value="">Todellinen</option>
+              <option value="1">Meri</option>
+              <option value="0">Järvi</option>
+            </select>
+          </label>
+          <label>Korkeuserot
+            <select id="pvRelief">
+              <option value="">Todellinen</option>
+              <option value="30">Tasainen</option>
+              <option value="400">Tunturit</option>
+              <option value="1800">Vuoristo</option>
+            </select>
+          </label>
+          <label>Revontulet
+            <select id="pvKp">
+              <option value="">Todellinen</option>
+              <option value="0">Kp 0</option>
+              <option value="3">Kp 3</option>
+              <option value="5">Kp 5</option>
+              <option value="8">Kp 8</option>
+            </select>
+          </label>
+          <label>Tuuli
+            <select id="pvWind">
+              <option value="">Todellinen</option>
+              <option value="0">Tyyntä</option>
+              <option value="6">6 m/s</option>
+              <option value="14">14 m/s</option>
+            </select>
+          </label>
+          <label>Tapahtuma
+            <select id="pvEvent">
+              <option value="">Todellinen</option>
+              <option value="juhannus">Juhannus</option>
+              <option value="vappu">Vappu</option>
+              <option value="joulu">Joulu</option>
+              <option value="uusivuosi">Uusivuosi</option>
+              <option value="itsenaisyyspaiva">Itsenäisyyspäivä</option>
+              <option value="halloween">Halloween</option>
+              <option value="liputus">Liputuspäivä</option>
+            </select>
+          </label>
         </div>
       </details>
     </footer>
@@ -178,6 +223,8 @@
   <script src="js/icons.js"></script>
   <script src="js/pixelbg.js"></script>
   <script src="js/place.js"></script>
+  <script src="js/astro.js"></script>
+  <script src="js/events.js"></script>
   <script src="js/api.js"></script>
   <script src="js/demo.js"></script>
   <script src="js/chart.js"></script>

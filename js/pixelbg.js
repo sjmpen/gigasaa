@@ -210,7 +210,10 @@
     if (s.lat < 0) m = ((m + 5) % 12) + 1;
     const seasonal = !!s.season || (B.seasonal && Math.abs(s.lat) >= 23.5 && !s.evergreen);
     const wintry = [11, 12, 1, 2, 3, 4].includes(m);
-    let snowGround = !!s.ice || d.precip === 'snow' || (s.temp <= 0 && wintry && seasonal) || s.temp <= -3;
+    let snowGround;
+    if (s.ice) snowGround = true;
+    else if (s.snowDepth != null) snowGround = s.snowDepth >= 0.01 || (d.precip === 'snow' && s.temp <= 1); // lumensyvyys datasta
+    else snowGround = d.precip === 'snow' || (s.temp <= 0 && wintry && seasonal) || s.temp <= -3;
     let foliage = !seasonal ? 'summer' : m === 5 ? 'spring' : m >= 6 && m <= 8 ? 'summer' : m === 9 || m === 10 ? 'autumn' : 'late';
     if (s.season) { foliage = s.season === 'winter' ? 'snow' : s.season; snowGround = foliage === 'snow'; }
     if (snowGround) foliage = 'snow';
@@ -219,11 +222,42 @@
     else if (biome === 'tundra') ground = foliage === 'autumn' ? 'ruska' : foliage === 'late' ? 'late' : 'tundra';
     else if (B.seasonal || s.season) ground = B.ground && !s.season ? B.ground : foliage;
     else ground = B.ground || 'summer';
-    const water = B.water;
-    const frozen = water !== 'none' && snowGround && (!!s.ice || [12, 1, 2, 3].includes(m) || s.season === 'winter') && s.temp < 1;
+    // vesistö: rannikolla meri, sisämaassa järvi
+    let water = B.water;
+    if (water !== 'none' && s.coast === true) water = 'sea';
+    else if (water === 'sea' && s.coast === false) water = 'lake';
+    // jää: pakkasvuorokausista laskettu tila, muuten arvio
+    let frozen = false, partialIce = false;
+    if (water === 'none') frozen = false;
+    else if (s.ice || s.season) frozen = snowGround && (!!s.ice || s.season === 'winter') && s.temp < 1;
+    else if (s.iceState) { frozen = s.iceState === 'frozen'; partialIce = s.iceState === 'partial'; }
+    else frozen = snowGround && [12, 1, 2, 3].includes(m) && s.temp < 1;
     const style = STYLE[s.style] ? s.style : 'nordic';
     const settlement = STAR_F[s.settlement] ? s.settlement : 'rural';
-    return Object.assign({}, d, { snowGround, foliage, ground, frozen, water, phase: s.phase, biome, B, style, st: STYLE[style], settlement });
+    // aurinko ja kuu (oletukset, jos tähtitieteellisiä tietoja ei ole annettu)
+    const ph = s.phase;
+    const south = s.lat < 0;
+    const sunAlt = s.sunAlt != null ? s.sunAlt : ph === 'day' ? 35 : ph === 'dusk' ? 1 : -25;
+    const sunAz = s.sunAz != null ? s.sunAz : (south ? 0 : 180) + (ph === 'dusk' ? 50 : 20) * (south ? -1 : 1);
+    const moon = {
+      alt: s.moonAlt != null ? s.moonAlt : ph === 'night' ? 32 : -10,
+      az: s.moonAz != null ? s.moonAz : south ? 40 : 140,
+      phase: s.moonPhase != null ? s.moonPhase : 0.38,
+      fraction: s.moonFrac != null ? s.moonFrac : 0.85,
+    };
+    // maaston korkeuserot → vuorten korkeus; yli 900 m → alppimaisemat
+    const rel = s.relief;
+    const reliefF = rel == null ? 1 : rel < 60 ? 0.45 : rel < 200 ? 0.45 + ((rel - 60) / 140) * 0.4 : rel < 800 ? 0.85 + ((rel - 200) / 600) * 0.45 : Math.min(1.9, 1.3 + (rel - 800) / 2500);
+    const alpine = rel != null && rel >= 900;
+    const snowCaps = s.peak != null && s.peak > Math.max(800, 5500 - 80 * Math.abs(s.lat));
+    // tuulen suunta ruudulla: katsoja katsoo pohjoisella pallonpuoliskolla etelään (oikealla länsi)
+    const toward = ((s.windDir != null ? s.windDir : 270) + 180) % 360;
+    const windX = (s.wind || 0) * Math.cos(((toward - (south ? 90 : 270)) * Math.PI) / 180);
+    return Object.assign({}, d, {
+      snowGround, foliage, ground, frozen, partialIce, water, coastOpen: s.coast === true && water === 'sea', phase: ph, biome, B,
+      style, st: STYLE[style], settlement, sunAlt, sunAz, moon, reliefF, alpine, snowCaps, windX, month: m, seasonal,
+      ev: s.ev || { fx: {}, flag: null },
+    });
   };
 
   PixelScene.prototype.build = function () {
@@ -236,7 +270,7 @@
     const americas = sc.style === 'namerica' || sc.style === 'samerica';
 
     // ---- taivas ----
-    const P = SKY[ph];
+    const P = skyPalettes(sc.sunAlt);
     let sky = mixPal(P.clear, P.over, clamp(sc.clouds * 1.1 - 0.1, 0, 1));
     sky = mixPal(sky, P.storm, sc.dark * sc.clouds);
     if (sc.fog) sky = mixPal(sky, P.fog, 0.8);
@@ -269,14 +303,32 @@
         if (rand() < 0.25) this.stars.push([x, y]);
       }
     }
+    // aurinko ja kuu todellisilla paikoillaan; kuu oikeassa vaiheessaan
     this.body = null;
     if (sc.clouds < 0.95 && !sc.fog) {
-      if (ph === 'night') this.body = { x: Math.round(W * 0.2), y: Math.round(H * 0.15), r: 6, moon: true };
-      else if (ph === 'dusk') this.body = { x: Math.round(W * 0.7), y: Math.round(hy - H * 0.16), r: 9, moon: false };
-      else this.body = { x: Math.round(W * 0.78), y: Math.round(H * 0.16), r: 7, moon: false };
-      drawBody(S.ctx, this.body, ph, sky);
+      const sp = skyPos(sc.sunAz, sc.sunAlt, W, hy, s.lat);
+      let sun = null, moon = null;
+      if (sp && sc.sunAlt > -1.5) {
+        const low = sc.sunAlt < 6;
+        sun = { x: sp.x, y: sp.y, r: low ? 9 : 7, moon: false };
+        drawBody(S.ctx, sun, low ? 'dusk' : 'day', sky);
+      }
+      const mp = skyPos(sc.moon.az, sc.moon.alt, W, hy, s.lat);
+      if (mp && sc.moon.alt > -1 && sc.moon.fraction > 0.03 && (sc.sunAlt < 0 || sc.moon.fraction > 0.2)) {
+        moon = { x: mp.x, y: mp.y, r: 6, moon: true, phase: sc.moon.phase, fraction: sc.moon.fraction, south: s.lat < 0, pale: sc.sunAlt > 0 };
+        drawBody(S.ctx, moon, ph, sky);
+      }
+      this.body = sun && sc.sunAlt > 0 ? sun : moon && !moon.pale ? moon : sun;
     }
     this.layers.sky = S;
+    // revontulet
+    this.aurora = null;
+    const aur = (s.aurora || 0) * (1 - Math.min(1, sc.clouds * 1.1)) * (sc.fog ? 0 : 1);
+    if (aur > 0.04 && sc.sunAlt < -9) {
+      const ah = Math.round(hy * 0.7);
+      const A = layer(W, ah);
+      this.aurora = { L: A, img: A.ctx.createImageData(W, ah), s: Math.min(1, aur), ah, last: -1 };
+    }
 
     // ---- pilvet ----
     this.clouds = [];
@@ -319,24 +371,49 @@
     const gp = GROUND[sc.ground];
     let terrain = B.terrain;
     if (sc.biome === 'desert' && !americas && sc.style !== 'oceania') terrain = 'dune';
+    if (sc.alpine && terrain !== 'dune') terrain = 'alpine';
+    const amp = H * B.amp * sc.reliefF;
     const nearT = sc.fog ? 0.25 : 0.55, farT = sc.fog ? 0.4 : 0.72;
-    const fA = mix(horizon, ph === 'night' ? '#1c2650' : B.tint, nearT);
-    const fB = mix(horizon, ph === 'night' ? '#141d40' : dark(B.tint, 0.2), farT);
-    const capA = sc.snowGround ? mix('#ffffff', horizon, ph === 'day' ? 0.15 : 0.55) : mix(fA, '#ffffff', 0.12);
-    const ridgeA = ridgeOf(terrain, rand, W, hy, H * B.amp);
-    const ridgeB = ridgeOf(terrain === 'peaks' ? 'peaks' : terrain === 'mesa' ? 'mesa' : terrain, rand, W, hy, H * B.amp * 0.56);
-    drawFell(F.ctx, ridgeA, hy, fA, capA, horizon, sc.snowGround ? 6 : 2, terrain, null);
+    const tintA = terrain === 'alpine' ? '#5a6478' : B.tint;
+    const fA = mix(horizon, ph === 'night' ? '#1c2650' : tintA, nearT);
+    const fB = mix(horizon, ph === 'night' ? '#141d40' : dark(tintA, 0.2), farT);
+    const alpCaps = terrain === 'alpine' && (sc.snowGround || sc.snowCaps);
+    const capA = sc.snowGround || alpCaps ? mix('#ffffff', horizon, ph === 'day' ? 0.15 : 0.55) : mix(fA, '#ffffff', 0.12);
+    const ridgeA = ridgeOf(terrain, rand, W, hy, amp);
+    const ridgeB = ridgeOf(terrain, rand, W, hy, amp * 0.56);
+    drawFell(F.ctx, ridgeA, hy, fA, capA, horizon, sc.snowGround ? 6 : 2, terrain, null, alpCaps ? Math.round(hy - amp * 0.62) : null);
     const fields = B.fields && !sc.snowGround ? fieldColors(fB, sc.foliage) : null;
-    drawFell(F.ctx, ridgeB, hy, fB, sc.snowGround ? mix(capA, fB, 0.35) : mix(fB, '#ffffff', 0.1), horizon, sc.snowGround ? 4 : 1, terrain, fields && { colors: fields, rand });
+    drawFell(F.ctx, ridgeB, hy, fB, sc.snowGround ? mix(capA, fB, 0.35) : mix(fB, '#ffffff', 0.1), horizon, sc.snowGround ? 4 : 1, terrain, fields && { colors: fields, rand }, alpCaps && terrain === 'alpine' ? Math.round(hy - amp * 0.4) : null);
+
+    // rannikolla avomeri toisella laidalla: maan sallittu korkeus (px) sarakkeittain
+    let landH = null;
+    this.openX = null;
+    if (sc.coastOpen) {
+      const right = rand() < 0.5;
+      const ow = Math.round(W * (0.3 + rand() * 0.12)), tw = Math.round(W * 0.1);
+      landH = new Float32Array(W);
+      for (let x = 0; x < W; x++) {
+        const dOpen = right ? W - ow - x : x - ow;
+        // niemen korkeus nousee loivasti rannasta sisämaahan
+        landH[x] = dOpen <= 0 ? 0 : dOpen < tw ? Math.pow(dOpen / tw, 1.4) * H * 0.12 : H * 0.12 + (dOpen - tw) * 1.2;
+      }
+      for (let x = 0; x < W; x++) if (landH[x] < hy) F.ctx.clearRect(x, 0, 1, hy + 1 - Math.round(landH[x]));
+      this.openX = right ? [W - ow, W] : [0, ow];
+    }
+    const allowed = (x) => (landH ? landH[clamp(Math.round(x), 0, W - 1)] : Infinity);
 
     // kaupungin siluetti puiden taakse
-    if (sc.settlement === 'city') skyline(F.ctx, W, H, hy, st, rand, farLights, this.blinkers, sc.snowGround, horizon);
+    if (sc.settlement === 'city') skyline(F.ctx, W, H, hy, st, rand, farLights, this.blinkers, sc.snowGround, horizon, allowed);
 
     // vastarannan profiili
     const forest = !B.open;
     const shore = [];
     const sAmp = forest ? H * 0.018 : H * 0.008;
-    for (let x = 0; x < W; x++) shore.push(Math.round(hy - 2 - sAmp * (1 + Math.sin(x * 0.045 + rand() * 0.2) * 0.6 + Math.sin(x * 0.13) * 0.3)));
+    for (let x = 0; x < W; x++) {
+      let y = Math.round(hy - 2 - sAmp * (1 + Math.sin(x * 0.045 + rand() * 0.2) * 0.6 + Math.sin(x * 0.13) * 0.3));
+      if (landH && landH[x] < hy) y = Math.max(y, Math.round(hy + 1 - Math.min(landH[x], hy + 1 - y)));
+      shore.push(y);
+    }
     const env = { sc, rand, H, horizon, americas };
     // takarivi
     if (B.far === 'desert') {
@@ -344,18 +421,21 @@
       const cx = W * (0.3 + rand() * 0.4);
       for (let i = 0; i < n; i++) {
         const x = Math.round(americas ? rand() * W : cx + (rand() - 0.5) * W * 0.12);
+        if (allowed(x) < 4) continue;
         plant(F.ctx, americas ? 'cactus' : 'palm', x, shore[clamp(x, 0, W - 1)] - 1, env, 0.35);
       }
     } else if (B.step > 0) {
       for (let x = -4; x < W + 4; x += Math.max(2, Math.round(B.step * (0.7 + rand() * 0.6)))) {
+        if (allowed(x) < 4) continue;
         plant(F.ctx, farKind(B.far, rand, sc.style), x, shore[clamp(x, 0, W - 1)] - 1, env, 0.35);
       }
     }
     const shoreFill = forest ? PINE.dark : dark(gp.pal[2], 0.35);
-    for (let x = 0; x < W; x++) rect(F.ctx, x, shore[x], 1, hy - shore[x] + 1, shoreFill);
+    for (let x = 0; x < W; x++) if (shore[x] <= hy) rect(F.ctx, x, shore[x], 1, hy - shore[x] + 1, shoreFill);
 
-    // asutus rannalla
+    // asutus rannalla (ei avomeren kohdalle)
     const occupied = new Uint8Array(W);
+    if (landH) for (let x = 0; x < W; x++) if (landH[x] < 12) occupied[x] = 1;
     if (sc.settlement !== 'rural') settlementRow(F.ctx, sc, st, W, H, hy, rand, farLights, this.blinkers, occupied);
 
     // etummainen puurivi (harvempi taajamissa)
@@ -363,16 +443,38 @@
       const ff = FRONT_F[sc.settlement];
       for (let x = -3; x < W + 3; x += Math.max(2, Math.round(B.step * (0.7 + rand() * 0.8) / Math.max(0.3, ff)))) {
         const xi = clamp(x, 0, W - 1);
+        if (allowed(xi) < 4) continue;
         if (occupied[xi] && rand() < 0.85) continue;
         const kind = farKind(B.far, rand, sc.style);
         plant(F.ctx, kind, x, shore[xi] + 1, env, 0);
       }
     }
-    rect(F.ctx, 0, hy, W, 1, sc.snowGround ? '#dfe7f3' : sc.water === 'none' ? gp.pal[2] : '#3a3428');
+    for (let x = 0; x < W; x++) if (allowed(x) > 0) rect(F.ctx, x, hy, 1, 1, sc.snowGround ? '#dfe7f3' : sc.water === 'none' ? gp.pal[2] : '#3a3428');
+    // majakkasaari avomerellä
+    this.lighthouse = null;
+    if (this.openX) this.lighthouse = lighthouse(F.ctx, Math.round((this.openX[0] + this.openX[1]) / 2 + (rand() - 0.5) * W * 0.08), hy, rand, sc.snowGround);
+    // juhannuskokko vastarannalla
+    this.kokko = null;
+    if (sc.ev.fx.kokko) {
+      let kx = Math.round(W * (0.3 + rand() * 0.3));
+      for (let i = 0; i < 20 && allowed(kx) < 10; i++) kx = Math.round(W * (0.1 + rand() * 0.8));
+      rect(F.ctx, kx - 4, hy - 2, 9, 2, '#3a2418');
+      rect(F.ctx, kx - 3, hy - 3, 7, 1, '#4a3020');
+      this.kokko = { x: kx, y: hy - 3 };
+    }
     if (TINT[ph]) tint(F, ph === 'dusk' ? '#d8b0b0' : '#8090cc');
     if (sc.dark > 0.3 && ph === 'day') tint(F, mix('#ffffff', '#8890a0', sc.dark * 0.6));
     if (ph !== 'day') drawLights(F.ctx, farLights, ph === 'dusk' ? 0.6 : 1, rand);
     this.layers.far = F;
+
+    // etualan rantaprofiili (tarvitaan jo vesikerroksessa)
+    const shoreY = Math.round(H * 0.84);
+    const prof = [];
+    for (let x = 0; x < W; x++) {
+      const l = Math.max(0, 1 - x / (W * 0.4)), r = Math.max(0, 1 - (W - x) / (W * 0.34));
+      prof.push(Math.round(shoreY - H * 0.17 * l ** 1.7 - H * 0.1 * r ** 1.5 + Math.sin(x * 0.21) * 0.8 + Math.sin(x * 0.07) * 1.5));
+    }
+    this.prof = prof;
 
     // ---- vesi / jää / hiekka ----
     const Wt = layer(W, H);
@@ -396,7 +498,9 @@
       const deep = ph === 'night' ? '#050a1c' : ph === 'dusk' ? '#2a1e3c' : sea ? '#0e5a7a' : '#173a6a';
       const wpal = [sky[4], sky[3], sky[2], sky[1], sky[0]].map((c, i) => mix(mix(c, deep, (sea ? 0.4 : 0.25) + i * 0.08), '#000000', 0.12));
       ditherRect(Wt.ctx, 0, hy + 1, W, waterH, wpal);
+      if (this.openX) for (let x = this.openX[0]; x < this.openX[1]; x++) rect(Wt.ctx, x, hy + 1, 1, 1, dark(wpal[0], 0.18));
     }
+    if (this.openX && sc.frozen) for (let x = this.openX[0]; x < this.openX[1]; x++) rect(Wt.ctx, x, hy + 1, 1, 1, '#b8c6dc');
     this.layers.water = Wt;
     const reflH = Math.min(waterH, Math.round(hy * 0.42));
     const R = layer(W, reflH);
@@ -407,17 +511,36 @@
     tint(R, ph === 'night' ? '#8090c0' : '#7486ad');
     this.layers.refl = R;
     this.reflH = reflH;
+    // rantajää (järvi alkaa jäätyä tai sulaa)
+    this.layers.ice = null;
+    if (sc.partialIce && sc.water !== 'none' && !sc.frozen) {
+      const I = layer(W, H);
+      const ice = ph === 'night' ? '#7c88aa' : ph === 'dusk' ? '#c8b8c8' : '#dce6f2', edge = ph === 'night' ? '#5e6a8a' : '#b0bed6';
+      let e1 = 2, e2 = 4;
+      for (let x = 0; x < W; x++) {
+        if (rand() < 0.4) e1 = clamp(e1 + (rand() < 0.5 ? -1 : 1), 1, 4);
+        if (rand() < 0.4) e2 = clamp(e2 + (rand() < 0.5 ? -1 : 1), 2, 8);
+        if (allowed(x) > 0) { rect(I.ctx, x, hy + 1, 1, e1, ice); rect(I.ctx, x, hy + 1 + e1, 1, 1, edge); }
+        rect(I.ctx, x, prof[x] - e2, 1, e2 + 1, ice);
+        rect(I.ctx, x, prof[x] - e2 - 1, 1, 1, edge);
+      }
+      this.layers.ice = I;
+    }
+    // aallonharjat merellä (aallonkorkeus datasta tai tuulesta)
+    this.crests = [];
+    if (sc.water === 'sea' && !sc.frozen) {
+      const wv = s.waves != null ? s.waves : Math.min(2.5, (s.wind || 0) * 0.12);
+      const n = Math.round(W * (0.05 + 0.1 * Math.min(3, wv)));
+      for (let i = 0; i < n; i++) {
+        const y = hy + 2 + Math.floor(Math.pow(rand(), 0.8) * (H - hy - 4));
+        const depth = (y - hy) / (H - hy);
+        this.crests.push({ x: rand() * W, y, len: 1 + Math.round(depth * (1.5 + wv * 1.5) * (0.4 + rand())), sp: (2 + rand() * 4) * (0.5 + depth), ph: rand() * 4 });
+      }
+    }
 
     // ---- etuala ----
     const L = layer(W, H);
     const fgLights = [];
-    const shoreY = Math.round(H * 0.84);
-    const prof = [];
-    for (let x = 0; x < W; x++) {
-      const l = Math.max(0, 1 - x / (W * 0.4)), r = Math.max(0, 1 - (W - x) / (W * 0.34));
-      prof.push(Math.round(shoreY - H * 0.17 * l ** 1.7 - H * 0.1 * r ** 1.5 + Math.sin(x * 0.21) * 0.8 + Math.sin(x * 0.07) * 1.5));
-    }
-    this.prof = prof;
     const top = Math.min.apply(null, prof);
     const G = layer(W, H);
     ditherRect(G.ctx, 0, top, W, H - top, gp.pal);
@@ -437,38 +560,73 @@
         rect(L.ctx, x, prof[x] - 2 - Math.floor(rand() * 3), 1, 3, sc.foliage === 'autumn' ? '#b8963c' : '#6a9a40');
       }
     }
-    // isot etualan kasvit vasemmalla ja oikealla
+    // isot etualan kasvit: omina kuvinaan, jotta tuuli voi heiluttaa niitä
     let fgKind = B.fg;
     if (fgKind === 'desert') fgKind = americas ? 'cactus' : 'palm';
     if (fgKind === 'bush' && (sc.style === 'africa' || sc.style === 'oceania')) fgKind = 'acacia';
     const SCALE = { spruce: 1, broadleaf: 0.85, evergreen: 0.85, cypress: 1, palm: 0.95, acacia: 0.55, cactus: 0.5, shrub: 0.12, bush: 0.12 };
+    this.trees = [];
+    const addTree = (kind, x, b, h, xmas) => {
+      if (sc.style === 'antarctica') return;
+      const sw = Math.ceil(h * 1.7) + 12, sh = Math.ceil(h * 1.35) + 8;
+      const T = layer(sw, sh);
+      const lx = sw >> 1, lb = sh - 3;
+      if (kind === 'spruce') rect(T.ctx, lx - 1, lb - 3, 2, 4, '#4a2e1e');
+      plant(T.ctx, kind, lx, kind === 'spruce' ? lb - 2 : lb, env, 0, true, h);
+      if (TINT[ph]) tint(T, TINT[ph]);
+      if (sc.dark > 0.3 && ph === 'day') tint(T, mix('#ffffff', '#7c8494', sc.dark * 0.6));
+      this.trees.push({ img: T.c, x: x - lx, y: b - lb, sh, ph: rand() * 6, lights: xmas ? treeLights(T, rand, Math.max(8, Math.round(h * 0.5))) : null, flex: kind === 'cactus' ? 0 : kind === 'palm' ? 1.3 : 1 });
+    };
     [[0.03, 0.36], [0.11, 0.27], [0.19, 0.2], [0.965, 0.3], [0.9, 0.2]].forEach(([fx, fh], i) => {
       if ((fgKind === 'cactus' || fgKind === 'acacia') && i % 2 === 1) return;
       const x = Math.round(W * fx);
       const h = Math.round(H * fh * (0.9 + rand() * 0.2) * (SCALE[fgKind] || 1));
-      const b = prof[clamp(x, 0, W - 1)];
-      if (fgKind === 'spruce') rect(L.ctx, x - 1, b - 3, 2, 4, '#4a2e1e');
-      plant(L.ctx, fgKind, x, fgKind === 'spruce' ? b - 2 : b, env, 0, true, h);
+      addTree(fgKind, x, prof[clamp(x, 0, W - 1)], h, sc.ev.fx.xmas && i === 4);
     });
-    if (sc.biome === 'tundra' && !sc.snowGround) plant(L.ctx, 'spruce', Math.round(W * 0.07), prof[Math.round(W * 0.07)], env, 0, true, Math.round(H * 0.12));
+    if (sc.biome === 'tundra' && !sc.snowGround) addTree('spruce', Math.round(W * 0.07), prof[Math.round(W * 0.07)], Math.round(H * 0.12), false);
     // rakennus etualalla: mökki maaseudulla ja kylässä, lyhty ja penkki taajamissa
     const cx = Math.round(W * 0.74);
     let cb = 0;
     for (let x = cx - 3; x < cx + 23; x++) cb = Math.max(cb, prof[clamp(x, 0, W - 1)]);
     this.cabin = null;
+    this.pole = null;
+    let px;
     if (sc.settlement === 'rural' || sc.settlement === 'village') {
       for (let x = cx - 3; x < cx + 23; x++) {
         const xx = clamp(x, 0, W - 1);
         L.ctx.drawImage(G.c, xx, cb - 1, 1, H - cb, xx, cb - 1, 1, H - cb);
       }
       this.cabin = fgBuilding(L.ctx, cx, cb, sc, st, rand, fgLights);
+      // lipputanko pohjoismaiselle mökille
+      if (sc.style === 'nordic') {
+        const pxp = cx - 8, gy = prof[pxp];
+        rect(L.ctx, pxp, gy - 30, 1, 30, '#e8e8ec');
+        rect(L.ctx, pxp, gy - 31, 1, 1, '#d8b040');
+        this.pole = { x: pxp + 1, y: gy - 29 };
+      }
+      px = cx + 23;
     } else {
       lamp(L.ctx, Math.round(W * 0.8), prof[Math.round(W * 0.8)], fgLights, sc.snowGround);
+      px = Math.round(W * 0.8) - 6;
     }
+    if (sc.ev.fx.pumpkin) pumpkin(L.ctx, px, prof[clamp(px + 2, 0, W - 1)], fgLights);
     if (TINT[ph]) tint(L, TINT[ph]);
     if (sc.dark > 0.3 && ph === 'day') tint(L, mix('#ffffff', '#7c8494', sc.dark * 0.6));
     if (ph !== 'day') drawLights(L.ctx, fgLights, 1, rand);
     this.layers.land = L;
+    this.tintC = TINT[ph];
+
+    // ---- eläimet ----
+    this.buildAnimals(rand);
+    // ---- tapahtumat ----
+    this.fw = sc.ev.fx.fireworks ? { rate: sc.ev.fx.fireworks, rockets: [], parts: [], next: 0 } : null;
+    this.sparks = [];
+    this.balloons = null;
+    if (sc.ev.fx.balloons) {
+      const BC = ['#e83a3a', '#f0c830', '#3a8ae8', '#4ac860', '#f070b0', '#f4f4f4'];
+      this.balloons = [];
+      for (let i = 0; i < 9; i++) this.balloons.push({ x: W * (0.3 + rand() * 0.5), y: H * (0.2 + rand() * 0.7), v: 5 + rand() * 5, c: BC[i % BC.length], ph: rand() * 6 });
+    }
 
     // ---- hiukkaset ----
     this.drops = [];
@@ -532,15 +690,17 @@
   PixelScene.prototype.step = function (dt, t) {
     const W = this.W, H = this.H, sc = this.sc, rand = this.rand;
     if (!sc) return;
-    const windDx = 0.12 + Math.min(0.5, (this.state.wind || 0) * 0.04);
+    const dir = sc.windX < 0 ? -1 : 1;
+    const windDx = 0.12 + Math.min(0.5, Math.abs(sc.windX) * 0.05);
     this.clouds.forEach((c) => {
-      c.x += c.v * dt;
-      if (c.x > W + 10) c.x = -c.img.width - 10 - rand() * 40;
+      c.x += c.v * dt * dir;
+      if (dir > 0 && c.x > W + 10) c.x = -c.img.width - 10 - rand() * 40;
+      if (dir < 0 && c.x < -c.img.width - 10) c.x = W + 10 + rand() * 40;
     });
-    this.fogBands.forEach((f) => { f.off = ((f.off || 0) + f.v * dt) % W; });
+    this.fogBands.forEach((f) => { f.off = ((((f.off || 0) + f.v * dt * dir) % W) + W) % W; });
     this.drops.forEach((d, i) => {
       d.y += d.v * dt;
-      d.x += d.v * dt * windDx;
+      d.x += d.v * dt * windDx * dir;
       if (d.y > d.end) {
         if (this.splashes.length < 60) this.splashes.push({ x: Math.round(d.x), y: Math.round(d.end), t: 0 });
         this.drops[i] = this.newDrop(rand, false);
@@ -550,13 +710,14 @@
     this.flakes.forEach((f) => {
       f.y += f.v * dt;
       f.p += dt * 1.5;
-      f.x += Math.sin(f.p) * 0.3 + windDx * f.v * dt * 0.6;
+      f.x += Math.sin(f.p) * 0.3 + windDx * f.v * dt * 0.6 * dir;
       if (f.y > H) { f.y = -2; f.x = rand() * W; }
       if (f.x > W) f.x -= W;
+      if (f.x < 0) f.x += W;
     });
     if (this.smokeOn && this.cabin) {
       if (rand() < dt * 3) this.smoke.push({ x: this.cabin.chimney[0], y: this.cabin.chimney[1], a: 0 });
-      this.smoke.forEach((p) => { p.a += dt; p.y -= dt * 6; p.x += dt * (2 + (this.state.wind || 0) * 0.8) + Math.sin(p.a * 3) * 0.1; });
+      this.smoke.forEach((p) => { p.a += dt; p.y -= dt * 6; p.x += dir * dt * (1 + Math.abs(sc.windX) * 0.8) + Math.sin(p.a * 3) * 0.1; });
       this.smoke = this.smoke.filter((p) => p.a < 3.5);
     }
     if (sc.thunder && t > this.nextBolt) {
@@ -567,11 +728,49 @@
     }
     this.flash = Math.max(0, this.flash - dt * 4);
     if (this.bolt && t > this.boltUntil) this.bolt = null;
+    this.stepAnimals(dt, t);
+    // ilotulitus
+    if (this.fw) {
+      const fw = this.fw;
+      if (t > fw.next) {
+        fw.rockets.push({ x: W * (0.12 + rand() * 0.76), y: this.hy, ty: H * (0.08 + rand() * 0.3), v: 55 + rand() * 25 });
+        fw.next = t + (1000 / fw.rate) * (0.4 + rand() * 1.2);
+      }
+      const FC = ['#ff5a5a', '#ffd84a', '#5ad0ff', '#7aff7a', '#ff7af0', '#ffffff', '#ffa040'];
+      fw.rockets = fw.rockets.filter((r) => {
+        r.y -= r.v * dt;
+        if (r.y > r.ty) return true;
+        const c = pick(rand, FC), c2 = pick(rand, FC), n = 26 + Math.floor(rand() * 18), sp = 20 + rand() * 20;
+        for (let i = 0; i < n; i++) {
+          const a = (i / n) * Math.PI * 2 + rand() * 0.2, v = sp * (0.6 + rand() * 0.5);
+          fw.parts.push({ x: r.x, y: r.y, vx: Math.cos(a) * v, vy: Math.sin(a) * v, life: 1.1 + rand() * 0.8, age: 0, c: i % 3 ? c : c2 });
+        }
+        return false;
+      });
+      fw.parts = fw.parts.filter((p) => {
+        p.age += dt; p.x += p.vx * dt; p.y += p.vy * dt; p.vy += 16 * dt; p.vx *= 0.985;
+        return p.age < p.life;
+      });
+    }
+    // juhannuskokon kipinät
+    if (this.kokko) {
+      if (rand() < dt * 8) this.sparks.push({ x: this.kokko.x + (rand() - 0.5) * 3, y: this.kokko.y - 4, a: 0, vx: dir * (0.5 + rand()) });
+      this.sparks.forEach((p) => { p.a += dt; p.y -= dt * (8 + rand() * 4); p.x += p.vx * dt * 3; });
+      this.sparks = this.sparks.filter((p) => p.a < 1.6);
+    }
+    // vapun ilmapallot
+    if (this.balloons) this.balloons.forEach((b) => {
+      b.y -= b.v * dt;
+      b.x += (Math.sin(t / 900 + b.ph) * 0.15 + sc.windX * 0.04) * dt * 10;
+      if (b.y < -10 || b.x < -10 || b.x > W + 10) { b.y = H * (0.75 + rand() * 0.1); b.x = W * (0.35 + rand() * 0.4); }
+    });
   };
 
   PixelScene.prototype.draw = function (t) {
     const ctx = this.ctx, W = this.W, H = this.H, hy = this.hy, sc = this.sc;
     if (!sc || !this.layers) return;
+    const tt = t / 1000;
+    const dir = sc.windX < 0 ? -1 : 1;
     ctx.globalAlpha = 1;
     ctx.drawImage(this.layers.sky.c, 0, 0);
     if (this.stars.length) {
@@ -580,19 +779,37 @@
         if ((i * 7 + k) % 5 === 0) { ctx.fillStyle = this.sky[0]; ctx.fillRect(x, y, 1, 1); }
       });
     }
+    if (this.aurora) {
+      drawAurora(this.aurora, W, t);
+      ctx.globalAlpha = 0.85;
+      ctx.drawImage(this.aurora.L.c, 0, 0);
+      ctx.globalAlpha = 1;
+    }
     this.clouds.forEach((c) => ctx.drawImage(c.img, Math.round(c.x), c.y));
     if (this.deck) ctx.drawImage(this.deck.c, 0, 0);
     if (this.bolt) drawBolt(ctx, this.bolt);
+    this.drawFlocks(ctx, t, 'far');
     ctx.drawImage(this.layers.far.c, 0, 0);
     // lentoestevalot
     if (this.blinkers.length && Math.floor(t / 700) % 2 === 0) {
       ctx.fillStyle = '#ff3a3a';
       this.blinkers.forEach(([x, y]) => ctx.fillRect(x, y, 1, 1));
     }
+    // majakan valo hämärässä ja yöllä
+    if (this.lighthouse && sc.phase !== 'day') {
+      const L = this.lighthouse, on = (t % 3000) < 450;
+      if (on) {
+        for (let i = 1; i < 26; i++) if (thr(L.x + i, L.y) < 1 - i / 26) { rect(ctx, L.x + i, L.y, 1, 1, 'rgba(255,240,180,0.7)'); rect(ctx, L.x - i, L.y, 1, 1, 'rgba(255,240,180,0.7)'); }
+        rect(ctx, L.x - 1, L.y - 1, 3, 3, 'rgba(255,240,180,0.5)');
+      }
+      rect(ctx, L.x, L.y, 1, 1, on ? '#ffffff' : '#ffd36b');
+    }
+    // juhannuskokko
+    if (this.kokko) drawKokko(ctx, this.kokko, t, this.sparks, sc.phase);
     if (this.fogBands[0]) drawFog(ctx, this.fogBands[0], W);
     ctx.drawImage(this.layers.water.c, 0, hy + 1, W, H - hy - 1, 0, hy + 1, W, H - hy - 1);
     if (!sc.frozen && sc.water !== 'none') {
-      const R = this.layers.refl.c, rh = this.reflH, tt = t / 1000;
+      const R = this.layers.refl.c, rh = this.reflH;
       ctx.globalAlpha = 0.55;
       for (let r = 0; r < rh; r++) {
         const off = Math.round(Math.sin(r * 0.9 + tt * 2.2) * (0.4 + (r / rh) * 1.4));
@@ -600,41 +817,107 @@
         ctx.drawImage(R, 0, r, W, 1, off, hy + 1 + r, W, 1);
       }
       ctx.globalAlpha = 1;
+      if (this.aurora) {
+        ctx.save();
+        ctx.globalAlpha = 0.25;
+        ctx.translate(0, hy * 2 + 2);
+        ctx.scale(1, -1);
+        ctx.drawImage(this.aurora.L.c, 0, 0);
+        ctx.restore();
+      }
       if (this.body) {
         const k = Math.floor(t / 220);
         const rr = rngFrom(k * 9973 + 7);
-        ctx.fillStyle = this.body.moon ? '#dfe6ff' : this.state.phase === 'dusk' ? '#ffd08a' : '#fff4c0';
-        for (let i = 0; i < 14; i++) {
+        ctx.fillStyle = this.body.moon ? '#dfe6ff' : this.body.r > 8 ? '#ffd08a' : '#fff4c0';
+        const n = this.body.moon ? Math.round(14 * this.body.fraction) : 14;
+        for (let i = 0; i < n; i++) {
           const y = hy + 2 + Math.floor(rr() * (H * 0.18));
           const w = 1 + Math.floor(rr() * 4);
           ctx.fillRect(this.body.x - 3 + Math.floor(rr() * 7) - (w >> 1), y, w, 1);
         }
       }
-      const k2 = Math.floor(t / 300);
-      const r2 = rngFrom(k2 * 31 + 3);
-      ctx.fillStyle = sc.water === 'sea' ? 'rgba(255,255,255,0.5)' : 'rgba(255,255,255,0.35)';
-      for (let i = 0; i < W / (sc.water === 'sea' ? 12 : 18); i++) ctx.fillRect(Math.floor(r2() * W), hy + 3 + Math.floor(r2() * (H - hy)), 2 + Math.floor(r2() * 3), 1);
+      if (this.kokko) {
+        const rr = rngFrom(Math.floor(t / 120) * 131 + 5);
+        for (let i = 0; i < 8; i++) rect(ctx, this.kokko.x - 1 + Math.floor(rr() * 3) - 1, hy + 2 + Math.floor(rr() * 12), 1 + Math.floor(rr() * 3), 1, rr() < 0.5 ? '#ffb040' : '#ff7a2a');
+      }
+      if (sc.water === 'sea') {
+        ctx.fillStyle = sc.phase === 'night' ? 'rgba(190,200,235,0.45)' : 'rgba(255,255,255,0.7)';
+        this.crests.forEach((c) => {
+          if (Math.floor(tt * 2.5 + c.ph) % 4 === 0) return;
+          const x = (((c.x + tt * c.sp * dir) % W) + W) % W;
+          ctx.fillRect(Math.round(x), c.y, c.len, 1);
+        });
+      } else {
+        const k2 = Math.floor(t / 300);
+        const r2 = rngFrom(k2 * 31 + 3);
+        ctx.fillStyle = 'rgba(255,255,255,0.35)';
+        for (let i = 0; i < W / 18; i++) ctx.fillRect(Math.floor(r2() * W), hy + 3 + Math.floor(r2() * (H - hy)), 2 + Math.floor(r2() * 3), 1);
+      }
     }
+    if (this.layers.ice) ctx.drawImage(this.layers.ice.c, 0, 0);
+    this.drawAnimals(ctx, t, 'water');
     if (this.fogBands[1]) drawFog(ctx, this.fogBands[1], W);
     ctx.drawImage(this.layers.land.c, 0, 0);
+    // etualan puut huojuvat tuulessa
+    const A = Math.min(4, (this.state.wind || 0) * 0.28);
+    this.trees.forEach((tr) => {
+      const a = A * tr.flex;
+      const sway = Math.sin(tt * (1.4 + a * 0.15) + tr.ph) * 0.6 + 0.4 * dir;
+      const offAt = (r) => Math.round(a * Math.pow(1 - r / tr.sh, 1.6) * sway);
+      if (a < 0.6) ctx.drawImage(tr.img, tr.x, tr.y);
+      else for (let r = 0; r < tr.sh; r++) ctx.drawImage(tr.img, 0, r, tr.img.width, 1, tr.x + offAt(r), tr.y + r, tr.img.width, 1);
+      if (tr.lights) {
+        const XC = ['#ff4a4a', '#ffd84a', '#4aa8ff', '#5aff7a', '#ff8af0'];
+        tr.lights.forEach(([lx, ly], i) => {
+          if ((i + Math.floor(tt * 2.5)) % 3 === 0) return;
+          rect(ctx, tr.x + lx + (a < 0.6 ? 0 : offAt(ly)), tr.y + ly, 1, 1, XC[i % XC.length]);
+        });
+      }
+    });
+    // jouluvalot mökin räystäällä
+    if (sc.ev.fx.xmas && this.cabin && this.cabin.eave) {
+      const XC = ['#ff4a4a', '#ffd84a', '#4aa8ff', '#5aff7a'];
+      const e = this.cabin.eave;
+      for (let x = e.x0, i = 0; x <= e.x1; x += 2, i++) if ((i + Math.floor(tt * 2)) % 4 !== 0) rect(ctx, x, e.y, 1, 1, XC[i % XC.length]);
+    }
+    if (this.pole) drawFlag(ctx, this.pole, sc.ev.flag === 'FI' ? 'flag' : 'pennant', this.state.cc, sc.windX, t, this.tintC);
+    this.drawAnimals(ctx, t, 'land');
     this.smoke.forEach((p) => {
       const a = Math.max(0, 0.6 - p.a / 6);
       ctx.fillStyle = `rgba(210,212,222,${a})`;
       const s = p.a > 1.5 ? 2 : 1;
       ctx.fillRect(Math.round(p.x), Math.round(p.y), s, s);
     });
+    if (this.balloons) this.balloons.forEach((b) => {
+      const x = Math.round(b.x), y = Math.round(b.y);
+      rect(ctx, x, y, 3, 4, b.c);
+      rect(ctx, x + 1, y - 1, 1, 1, b.c);
+      rect(ctx, x + 2, y, 1, 1, 'rgba(255,255,255,0.6)');
+      rect(ctx, x + 1, y + 4, 1, 3, 'rgba(230,230,230,0.7)');
+    });
+    if (this.fw) {
+      this.fw.rockets.forEach((r) => { rect(ctx, Math.round(r.x), Math.round(r.y), 1, 2, '#ffe0a0'); rect(ctx, Math.round(r.x), Math.round(r.y) + 3, 1, 2, 'rgba(255,200,120,0.5)'); });
+      this.fw.parts.forEach((p) => {
+        const f = 1 - p.age / p.life;
+        if (f < 0.35 && (Math.floor(p.age * 20) % 2)) return; // tuikkiva loppu
+        ctx.globalAlpha = Math.min(1, f * 1.6);
+        rect(ctx, Math.round(p.x), Math.round(p.y), p.age < 0.3 ? 2 : 1, p.age < 0.3 ? 2 : 1, p.c);
+      });
+      ctx.globalAlpha = 1;
+    }
     if (this.drops.length) {
-      ctx.fillStyle = this.state.phase === 'night' ? 'rgba(140,160,200,0.7)' : 'rgba(200,220,245,0.75)';
-      const slope = 0.12 + Math.min(0.5, (this.state.wind || 0) * 0.04);
+      ctx.fillStyle = sc.phase === 'night' ? 'rgba(140,160,200,0.7)' : 'rgba(200,220,245,0.75)';
+      const slope = (0.12 + Math.min(0.5, Math.abs(sc.windX) * 0.05)) * dir;
       this.drops.forEach((d) => {
         for (let j = 0; j < d.len; j++) ctx.fillRect(Math.round(d.x - j * slope), Math.round(d.y - j), 1, 1);
       });
       this.splashes.forEach((s) => { ctx.fillRect(s.x - 1, s.y, 1, 1); ctx.fillRect(s.x + 1, s.y, 1, 1); });
     }
     if (this.flakes.length) {
-      ctx.fillStyle = this.state.phase === 'night' ? '#c8d0e8' : '#ffffff';
+      ctx.fillStyle = sc.phase === 'night' ? '#c8d0e8' : '#ffffff';
       this.flakes.forEach((f) => ctx.fillRect(Math.round(f.x), Math.round(f.y), f.s, f.s));
     }
+    this.drawFlocks(ctx, t, 'near');
     if (this.fogBands[2]) drawFog(ctx, this.fogBands[2], W);
     if (this.flash > 0) {
       ctx.fillStyle = `rgba(230,236,255,${this.flash * 0.55})`;
@@ -644,6 +927,18 @@
 
   // ---------- maasto ----------
   function ridgeOf(style, rand, W, base, amp) {
+    if (style === 'alpine') {
+      const peaks = [];
+      const n = Math.max(3, Math.round(W / 38));
+      for (let i = 0; i < n; i++) peaks.push([rand() * W, 0.5 + rand() * 0.5, 0.7 + rand() * 0.9]);
+      const out = [];
+      for (let x = 0; x < W; x++) {
+        let v = 0.18;
+        peaks.forEach(([c, h, sl]) => (v = Math.max(v, h - (Math.abs(x - c) * sl) / Math.max(1, amp))));
+        out.push(Math.round(base - amp * v + (rand() < 0.3 ? 1 : 0)));
+      }
+      return out;
+    }
     if (style === 'mesa') {
       const out = [];
       let target = 0, len = 0, cur = base - amp * 0.3;
@@ -695,7 +990,7 @@
     return [base, mix(base, k[0], 0.22), mix(base, k[1], 0.18), mix(base, k[2], 0.2)];
   }
 
-  function drawFell(ctx, prof, hy, col, cap, haze, capDepth, style, fields) {
+  function drawFell(ctx, prof, hy, col, cap, haze, capDepth, style, fields, capY) {
     const minTop = Math.min.apply(null, prof);
     const span = hy - minTop || 1;
     let seg = 0, segC = col;
@@ -709,7 +1004,10 @@
         let c = fields && fromTop > 1 ? segC : col;
         if (style === 'mesa' && (y % 5 === 0)) c = dark(col, 0.12);
         if (style === 'dune' && slope > 0) c = mix(col, '#ffffff', 0.12);
-        if (fromTop < capDepth * high && high > 0.45) c = fromTop === capDepth * high - 1 && thr(x, y) < 0.5 ? col : cap;
+        if (style === 'alpine') c = slope > 0 ? mix(col, '#ffffff', 0.14) : slope < -1 ? dark(col, 0.1) : col;
+        if (capY != null) {
+          if (y < capY - 1 || (y < capY + 3 && thr(x, y) < (capY + 3 - y) / 5)) c = slope > 0 ? cap : mix(cap, col, 0.25);
+        } else if (fromTop < capDepth * high && high > 0.45) c = fromTop === capDepth * high - 1 && thr(x, y) < 0.5 ? col : cap;
         const hz = (y - (hy - 6)) / 6;
         if (hz > 0 && thr(x, y) < hz * 0.7) c = haze;
         rect(ctx, x, y, 1, 1, c);
@@ -987,7 +1285,7 @@
         }
       if (w >= 5) rect(ctx, x + Math.floor(w / 2), b - 2, 1, 2, dark(wall, 0.5));
     }
-    return { chimney };
+    return { chimney, eave: big ? { x0: x - 1, x1: x + w, y: top } : null };
   }
 
   function hut(ctx, x, b, w, snow) {
@@ -1018,7 +1316,8 @@
     if (neon && rand() < 0.35) lights.push([x + w - 1, b - h + 2 + Math.floor(rand() * (h / 2)), 1, 4, rand() < 0.5 ? '#ff5a9a' : '#5af0ff']);
   }
 
-  function skyline(ctx, W, H, hy, st, rand, lights, blinkers, snow, horizon) {
+  function skyline(ctx, W, H, hy, st, rand, lights, blinkers, snow, horizon, mask) {
+    const ok = (x0, w) => !mask || Math.min(mask(x0), mask(x0 + w)) > H * 0.3;
     const cx = W * (0.3 + rand() * 0.4);
     const b = hy - 1;
     const items = [];
@@ -1032,6 +1331,7 @@
       x += w + (rand() < 0.3 ? 1 : 0);
     }
     items.forEach(([bx, w, h]) => {
+      if (!ok(bx, w)) return;
       const glass = st.glass && rand() < 0.5;
       const base = glass ? pick(rand, ['#5a7a9a', '#6a8ab0', '#4a6a8a']) : pick(rand, st.city);
       block(ctx, bx, b, w, h, mix(base, horizon, 0.22), rand, lights, snow, glass, st.neon);
@@ -1040,8 +1340,9 @@
         blinkers.push([bx + (w >> 1), b - h - 4]);
       }
     });
-    if (st.tower) tvTower(ctx, Math.round(W * (0.1 + rand() * 0.8)), b, H, blinkers, lights);
-    if (rand() < 0.65) crane(ctx, Math.round(W * (0.15 + rand() * 0.7)), b, H, blinkers);
+    const tx = Math.round(W * (0.1 + rand() * 0.8)), kx = Math.round(W * (0.15 + rand() * 0.7));
+    if (st.tower && ok(tx - 3, 7)) tvTower(ctx, tx, b, H, blinkers, lights);
+    if (rand() < 0.65 && ok(kx - 7, 24)) crane(ctx, kx, b, H, blinkers);
   }
 
   /** Talorivi rannalla: kylä (hajallaan), taajama (yhtenäinen rykelmä) tai kaupungin rantakortteli. */
@@ -1226,7 +1527,7 @@
   // Etualan rakennus: pohjoismainen mökki, maja, tutkimusasema tai alueen tyylinen talo
   function fgBuilding(ctx, x, b, sc, st, rand, lights) {
     const snow = sc.snowGround;
-    if (sc.style === 'nordic') return cabin(ctx, x, b, snow, lights);
+    if (sc.style === 'nordic') return cabin(ctx, x, b, snow, lights, sc.ev.fx.candles);
     if (st.village === 'hut') { hut(ctx, x + 2, b, 16, snow); return { chimney: null }; }
     if (st.station) {
       for (let i = 0; i < 4; i++) rect(ctx, x + i * 6, b - 3, 1, 3, '#4a4a52');
@@ -1239,7 +1540,7 @@
     return house(ctx, x, b, 20, 9, st, rand, snow, lights, true);
   }
 
-  function cabin(ctx, x, b, snow, lights) {
+  function cabin(ctx, x, b, snow, lights, candles) {
     const wall = '#a8322a', wallD = '#86271f', trim = '#efe6d6';
     rect(ctx, x, b - 9, 20, 9, wall);
     for (let i = 2; i < 20; i += 3) rect(ctx, x + i, b - 9, 1, 9, wallD);
@@ -1253,11 +1554,15 @@
     rect(ctx, x + 15, b - 17, 3, 1, snow ? '#ffffff' : '#867676');
     rect(ctx, x + 3, b - 8, 6, 5, trim);
     rect(ctx, x + 4, b - 7, 4, 3, '#2a2440');
-    lights.push([x + 4, b - 7, 4, 3, '#ffd36b', 'glow']);
+    if (candles) {
+      // itsenäisyyspäivän kaksi kynttilää ikkunalla
+      lights.push([x + 4, b - 7, 4, 3, '#2a2240', 'glow']);
+      [x + 4, x + 7].forEach((cx) => { lights.push([cx, b - 5, 1, 2, '#f4f0e0']); lights.push([cx, b - 6, 1, 1, '#ffd040']); });
+    } else lights.push([x + 4, b - 7, 4, 3, '#ffd36b', 'glow']);
     rect(ctx, x + 12, b - 7, 5, 7, trim);
     rect(ctx, x + 13, b - 6, 3, 6, '#5a2c22');
     rect(ctx, x + 15, b - 3, 1, 1, '#d8b040');
-    return { chimney: [x + 16, b - 18] };
+    return { chimney: [x + 16, b - 18], eave: { x0: x - 2, x1: x + 21, y: b - 9 } };
   }
 
   function lamp(ctx, x, b, lights, snow) {
@@ -1292,25 +1597,176 @@
   function drawBody(ctx, b, ph, sky) {
     const { x, y, r } = b;
     const glow = b.moon ? '#9fb0e8' : ph === 'dusk' ? '#ffb070' : '#fff4c0';
-    for (let yy = -r * 3; yy <= r * 3; yy++)
-      for (let xx = -r * 3; xx <= r * 3; xx++) {
-        const d = Math.sqrt(xx * xx + yy * yy) / r;
-        if (d <= 1 || d > 3) continue;
-        const a = (3 - d) / 2;
-        if (thr(x + xx, y + yy) < a * (b.moon ? 0.35 : 0.5)) rect(ctx, x + xx, y + yy, 1, 1, mix(glow, sky[1], 0.45));
-      }
+    const gk = b.moon ? (b.pale ? 0 : 0.35 * b.fraction) : 0.5;
+    if (gk > 0)
+      for (let yy = -r * 3; yy <= r * 3; yy++)
+        for (let xx = -r * 3; xx <= r * 3; xx++) {
+          const d = Math.sqrt(xx * xx + yy * yy) / r;
+          if (d <= 1 || d > 3) continue;
+          if (thr(x + xx, y + yy) < ((3 - d) / 2) * gk) rect(ctx, x + xx, y + yy, 1, 1, mix(glow, sky[1], 0.45));
+        }
+    const cph = b.moon ? Math.cos(2 * Math.PI * b.phase) : 0;
     for (let yy = -r; yy <= r; yy++)
       for (let xx = -r; xx <= r; xx++) {
         const d2 = xx * xx + yy * yy;
         if (d2 > r * r + r * 0.6) continue;
         let c;
         if (b.moon) {
-          if ((xx - r * 0.55) ** 2 + (yy + r * 0.35) ** 2 < (r * 0.8) ** 2) continue;
-          c = xx + yy < -r * 0.6 ? '#fffbe6' : '#efe3ad';
+          // valaistu osa: kasvava kuu oikealta (pohjoisella pallonpuoliskolla), vähenevä vasemmalta
+          const xn = (b.south ? -xx : xx) / r, yn = yy / r;
+          const w = Math.sqrt(Math.max(0, 1 - yn * yn));
+          const lit = b.phase < 0.5 ? xn > w * cph : xn < -w * cph;
+          if (!lit) {
+            if (b.pale) continue;
+            c = mix(sky[1], '#000010', 0.2);
+          } else {
+            c = xx + yy < -r * 0.6 ? '#fffbe6' : (xx * 7 + yy * 3) % 11 === 0 ? '#d8cc98' : '#efe3ad';
+            if (b.pale) c = mix(c, sky[2], 0.5);
+          }
         } else if (ph === 'dusk') c = yy > r * 0.3 ? '#ff8a4a' : yy < -r * 0.4 ? '#ffe39a' : '#ffb85c';
         else c = xx + yy < -r * 0.7 ? '#ffffff' : d2 > (r - 1.2) ** 2 ? '#ffd65a' : '#fff1a0';
         rect(ctx, x + xx, y + yy, 1, 1, c);
       }
+  }
+
+  /** Taivaanpaikka ruudulla: katsoja katsoo pohjoisella pallonpuoliskolla etelään, eteläisellä pohjoiseen. */
+  function skyPos(az, alt, W, hy, lat) {
+    const view = lat >= 0 ? 180 : 0;
+    const d = ((az - view + 540) % 360) - 180;
+    const x = Math.round(W * (0.5 + d / 200));
+    if (x < -12 || x > W + 12) return null;
+    const y = Math.round(hy - 3 - (Math.max(-3, alt) / 55) * hy * 0.92);
+    return { x, y: Math.max(10, y) };
+  }
+
+  /** Taivaan väripaletit auringon korkeuden mukaan: päivä → hämärä → yö liukuvasti. */
+  function skyPalettes(alt) {
+    const out = {};
+    ['clear', 'over', 'storm', 'fog'].forEach((k) => {
+      out[k] = alt >= 8 ? SKY.day[k] : alt >= 0 ? mixPal(SKY.dusk[k], SKY.day[k], alt / 8)
+        : alt >= -6 ? SKY.dusk[k] : alt >= -12 ? mixPal(SKY.night[k], SKY.dusk[k], (alt + 12) / 6) : SKY.night[k];
+    });
+    return out;
+  }
+
+  // Revontulet: aaltoilevia verhoja, päivitetään n. 9 kertaa sekunnissa
+  function drawAurora(a, W, t) {
+    const k = Math.floor(t / 110);
+    if (k === a.last) return;
+    a.last = k;
+    const ah = a.ah, d = a.img.data, s = a.s, tt = t / 1000;
+    d.fill(0);
+    const G1 = [100, 255, 160], G2 = [40, 210, 130], PU = [190, 110, 255];
+    for (let x = 0; x < W; x++) {
+      const n = Math.sin(x * 0.031 + tt * 0.25) + 0.8 * Math.sin(x * 0.013 - tt * 0.17 + 1.3) + 0.35 * Math.sin(x * 0.075 + tt * 0.6);
+      const I = Math.max(0, Math.min(1, (n + 0.7) / 2.2)) * s;
+      if (I < 0.03) continue;
+      const base = Math.round(ah * 0.9 + Math.sin(x * 0.021 + tt * 0.3) * ah * 0.07);
+      const len = Math.round(ah * (0.3 + 0.4 * I + 0.08 * Math.sin(x * 0.11 + tt)));
+      for (let j = 0; j < len; j++) {
+        const y = base - j;
+        if (y < 0 || y >= ah) continue;
+        const f = j / len;
+        const br = I * (f < 0.12 ? f / 0.12 : 1 - ((f - 0.12) / 0.88) * 0.9);
+        if (thr(x, y) >= br * 1.25) continue;
+        const c = f < 0.4 ? G1 : f < 0.7 ? G2 : s > 0.5 ? PU : G2;
+        const i = (y * W + x) * 4;
+        d[i] = c[0]; d[i + 1] = c[1]; d[i + 2] = c[2]; d[i + 3] = Math.round(110 + 145 * Math.min(1, br));
+      }
+    }
+    a.L.ctx.putImageData(a.img, 0, 0);
+  }
+
+  // Majakka kalliosaarella; palauttaa lyhdyn paikan
+  function lighthouse(ctx, x, hy, rand, snow) {
+    const rock = '#6a6e7a', rockHi = snow ? '#eef3fb' : '#9aa0aa';
+    for (let yy = -3; yy <= 0; yy++)
+      for (let xx = -9; xx <= 9; xx++) if ((xx * xx) / 81 + (yy * yy) / 10 <= 1) rect(ctx, x + xx, hy + yy, 1, 1, yy === -3 || (yy === -2 && Math.abs(xx) > 4) ? rockHi : rock);
+    for (let i = 0; i < 3; i++) {
+      const sx = x + (rand() < 0.5 ? -1 : 1) * (14 + Math.floor(rand() * 20)), sw = 2 + Math.floor(rand() * 3);
+      rect(ctx, sx, hy - 1, sw, 1, rockHi);
+      rect(ctx, sx - 1, hy, sw + 2, 1, rock);
+    }
+    const tx = x - 1, top = hy - 17;
+    for (let yy = top; yy < hy - 2; yy++) rect(ctx, tx, yy, 3, 1, Math.floor((yy - top) / 3) % 2 ? '#f0f0f4' : '#c8302a');
+    rect(ctx, tx, top, 1, hy - 2 - top, 'rgba(0,0,0,0.15)');
+    rect(ctx, tx - 1, top - 1, 5, 1, '#2a2a34');
+    rect(ctx, tx, top - 3, 3, 2, '#3a3a44');
+    rect(ctx, tx + 1, top - 3, 1, 2, '#ffd36b');
+    rect(ctx, tx, top - 4, 3, 1, '#c8302a');
+    rect(ctx, tx + 1, top - 5, 1, 1, '#c8302a');
+    return { x: tx + 1, y: top - 3 };
+  }
+
+  // Juhannuskokko: lepattavat liekit, hehku ja kipinät
+  function drawKokko(ctx, k, t, sparks, ph) {
+    const rr = rngFrom(Math.floor(t / 90) * 7 + 3);
+    if (ph !== 'day')
+      for (let yy = -10; yy <= 4; yy++)
+        for (let xx = -12; xx <= 12; xx++) {
+          const d = Math.sqrt(xx * xx + yy * yy * 2) / 12;
+          if (d < 1 && thr(k.x + xx, k.y + yy) < (1 - d) * 0.4) rect(ctx, k.x + xx, k.y + yy, 1, 1, 'rgba(255,140,60,0.35)');
+        }
+    for (let i = -3; i <= 3; i++) {
+      const h = Math.round((8 - Math.abs(i) * 2) * (0.6 + rr() * 0.6));
+      for (let j = 0; j < h; j++) rect(ctx, k.x + i, k.y - j, 1, 1, j < h * 0.4 ? '#ff6a1a' : j < h * 0.75 ? '#ffb52a' : '#ffe88a');
+    }
+    sparks.forEach((p) => rect(ctx, Math.round(p.x), Math.round(p.y), 1, 1, p.a < 0.8 ? '#ffd060' : '#ff8030'));
+  }
+
+  // Jouluvalot puun latvukseen: satunnaisia näkyviä pikseleitä
+  function treeLights(T, rand, n) {
+    const w = T.c.width, h = T.c.height;
+    const d = T.ctx.getImageData(0, 0, w, h).data;
+    const cand = [];
+    for (let y = 0; y < h - 6; y++) for (let x = 0; x < w; x++) if (d[(y * w + x) * 4 + 3] > 0) cand.push([x, y]);
+    const out = [];
+    for (let i = 0; i < n && cand.length; i++) out.push(cand.splice(Math.floor(rand() * cand.length), 1)[0]);
+    return out;
+  }
+
+  function pumpkin(ctx, x, b, lights) {
+    rect(ctx, x, b - 3, 5, 3, '#e8781a');
+    rect(ctx, x - 1, b - 2, 7, 1, '#e8781a');
+    rect(ctx, x + 1, b - 3, 1, 3, '#c85a10');
+    rect(ctx, x + 3, b - 3, 1, 3, '#c85a10');
+    rect(ctx, x + 2, b - 4, 1, 1, '#3a6a2a');
+    lights.push([x + 1, b - 2, 1, 1, '#ffe060']);
+    lights.push([x + 3, b - 2, 1, 1, '#ffe060']);
+  }
+
+  const mulHex = (c, t) => { const A = rgb(c), B = rgb(t); return hex(A.map((v, i) => (v * B[i]) / 255)); };
+  const PENNANT = { FI: ['#2a5ab0', '#f4f6fa'], SE: ['#2a6ab8', '#f0c830'], NO: ['#c8202a', '#f4f6fa'], DK: ['#c8202a', '#f4f6fa'], IS: ['#1a4ab0', '#f4f6fa'] };
+
+  /** Suomen lippu (liputuspäivinä) tai viiri; liehuu tuulen suuntaan, tyynellä roikkuu. */
+  function drawFlag(ctx, pole, mode, cc, windX, t, tintC) {
+    const cs = (c) => (tintC ? mulHex(c, tintC) : c);
+    const dir = windX >= 0 ? 1 : -1, wsp = Math.abs(windX), tt = t / 1000;
+    const amp = Math.min(1.2, wsp / 5);
+    if (mode === 'flag') {
+      const W = '#f4f6fa', Bl = '#1a4ab0';
+      if (wsp < 0.8) {
+        for (let j = 0; j < 11; j++) for (let i = 0; i < 4; i++) rect(ctx, pole.x + i, pole.y + j, 1, 1, cs(j === 4 || j === 5 || i === 2 ? Bl : W));
+        return;
+      }
+      const fw = 12, fh = 8;
+      for (let i = 0; i < fw; i++) {
+        const dy = Math.round(Math.sin(i * 0.8 - tt * 7) * amp * (i / fw)) + Math.round((1 - Math.min(1, wsp / 4)) * i * 0.35);
+        for (let j = 0; j < fh; j++) rect(ctx, pole.x + (dir > 0 ? i : -2 - i), pole.y + j + dy, 1, 1, cs(j === 3 || j === 4 || i === 3 || i === 4 ? Bl : W));
+      }
+      return;
+    }
+    const pc = PENNANT[(cc || '').toUpperCase()] || ['#2a5ab0', '#f4f6fa'];
+    const L = 18;
+    if (wsp < 0.8) {
+      for (let j = 0; j < 12; j++) rect(ctx, pole.x, pole.y + j, j < 10 ? 2 : 1, 1, cs(pc[j % 2 ? 1 : 0]));
+      return;
+    }
+    for (let i = 0; i < L; i++) {
+      const th = Math.max(1, Math.round(3 - (i * 2.5) / L));
+      const dy = Math.round(Math.sin(i * 0.6 - tt * 6) * amp * (i / L) * 1.5) + Math.round((1 - Math.min(1, wsp / 4)) * i * 0.4);
+      for (let j = 0; j < th; j++) rect(ctx, pole.x + (dir > 0 ? i : -2 - i), pole.y + j + dy, 1, 1, cs(j === 0 ? pc[0] : pc[1]));
+    }
   }
 
   function cloudSprite(rand, w, h, pal) {
@@ -1374,6 +1830,146 @@
       }
     });
   }
+
+  // ---------- eläimet ----------
+  // Pikselikartat vasemmalle katsoville eläimille ('.' = läpinäkyvä). Toinen kuva = kävelyaskel.
+  const SPR = {
+    reindeer: { o: 1, pal: { a: '#9a7a56', h: '#6e5c4c', b: '#7a6650', w: '#d8d0c0', t: '#efe8dc', l: '#4a3a2c' }, frames: [
+      ['.a..a.......', 'aa.aa.......', '.aaa........', '..hh........', '.hhhbbbbbb..', 'hh..bbbbbbbt', '....bbbbbbb.', '....wwwwwww.', '....l.l..l.l', '....l.l..l.l'],
+      ['.a..a.......', 'aa.aa.......', '.aaa........', '..hh........', '.hhhbbbbbb..', 'hh..bbbbbbbt', '....bbbbbbb.', '....wwwwwww.', '.....l.l.l.l', '....l...l..l'],
+    ] },
+    camel: { o: 1, pal: { h: '#c8995a', b: '#c8995a', t: '#8a6a3a', l: '#a87a42' }, frames: [
+      ['.hh...........', 'hhhh..........', '..hh....bb....', '...h...bbbb...', '...hh.bbbbbb..', '....bbbbbbbbb.', '....bbbbbbbbbt', '.....bbbbbbb.t', '.....l.l..l.l.', '.....l.l..l.l.', '.....l.l..l.l.'],
+      ['.hh...........', 'hhhh..........', '..hh....bb....', '...h...bbbb...', '...hh.bbbbbb..', '....bbbbbbbbb.', '....bbbbbbbbbt', '.....bbbbbbb.t', '......l.l.l.l.', '......l.l.l.l.', '.....l...l...l'],
+    ] },
+    giraffe: { o: 1, pal: { y: '#e0b050', p: '#8a5a2a', o: '#6a4a2a', l: '#c09040', t: '#5a3a1a' }, frames: [
+      ['.o.o......', '.yyy......', 'yyyy......', '..yy......', '..yp......', '..yy......', '..py......', '..yy......', '..yyypyyp.', '..pyyyypyy', '..yyypyyyt', '...yyyyyy.', '...l.l.l.l', '...l.l.l.l', '...l.l.l.l', '...l.l.l.l'],
+      ['.o.o......', '.yyy......', 'yyyy......', '..yy......', '..yp......', '..yy......', '..py......', '..yy......', '..yyypyyp.', '..pyyyypyy', '..yyypyyyt', '...yyyyyy.', '...l..l.l.', '...l..l.l.', '....l.l..l', '....l.l..l'],
+    ] },
+    kangaroo: { o: 1, pal: { e: '#8a5a3a', h: '#b07a50', b: '#b07a50', t: '#9a6a44', l: '#8a5a3a' }, frames: [
+      ['..e......', '.hhh.....', 'hhhh.....', '..bb.....', '..bbb....', '..bbbb...', '...bbbbtt', '...bb...t', '..ll.....', '.lll.....'],
+    ] },
+    duck: { o: 0, pal: { g: '#2a6a3a', y: '#e8b030', b: '#8a6a4a', t: '#3a3a3a' }, frames: [['.gg...', 'ygg...', '..bbbb', '.bbbbt']] },
+    gull: { o: 0, pal: { w: '#f4f6fa' }, frames: [['w...w', '.www.'], ['.www.', 'w...w']] },
+    bird: { o: 0, pal: { k: '#2a2a3a' }, frames: [['k.k', '.k.'], ['...', 'kkk']] },
+  };
+
+  function spriteFrames(def, tintC) {
+    const h = def.frames[0].length, w = def.frames[0][0].length, o = def.o;
+    const make = (rows, flip) => {
+      const L = layer(w + o * 2, h + o * 2);
+      const solid = (x, y) => y >= 0 && y < h && x >= 0 && x < w && rows[y][x] !== '.';
+      for (let y = -o; y < h + o; y++)
+        for (let x = -o; x < w + o; x++) {
+          const sx = flip ? w - 1 - x : x;
+          if (solid(sx, y)) rect(L.ctx, x + o, y + o, 1, 1, def.pal[rows[y][sx]]);
+          else if (o && (solid(sx - 1, y) || solid(sx + 1, y) || solid(sx, y - 1) || solid(sx, y + 1))) rect(L.ctx, x + o, y + o, 1, 1, '#241c2c');
+        }
+      if (tintC) tint(L, tintC);
+      return L.c;
+    };
+    return { w, h, o, L: def.frames.map((f) => make(f, false)), R: def.frames.map((f) => make(f, true)) };
+  }
+
+  PixelScene.prototype.buildAnimals = function (rand) {
+    const sc = this.sc, s = this.state, W = this.W, H = this.H, hy = this.hy, ph = sc.phase;
+    const lat = Math.abs(s.lat || 0);
+    const tc = TINT[ph] || (sc.dark > 0.3 ? mix('#ffffff', '#7c8494', sc.dark * 0.6) : null);
+    const mk = (k) => spriteFrames(SPR[k], tc);
+    const heavy = (sc.amount || 0) > 0.6 || sc.thunder;
+    this.animals = [];
+    const walkers = (k, n, v, x0, x1) => {
+      const spr = mk(k);
+      for (let i = 0; i < n; i++)
+        this.animals.push({ k, spr, layer: 'land', x: W * (x0 + rand() * (x1 - x0)), dir: rand() < 0.5 ? -1 : 1, v: v * (0.7 + rand() * 0.6), min: W * x0, max: W * x1 - spr.w, ph: rand() * 6, pause: rand() * 3 });
+    };
+    if (sc.style === 'nordic' && lat >= 64.5 && ['taiga', 'tundra', 'boreal'].includes(sc.biome)) walkers('reindeer', 2 + (rand() < 0.5 ? 1 : 0), 3, 0.3, 0.66);
+    if (sc.biome === 'desert' && (sc.style === 'westasia' || sc.style === 'africa')) walkers('camel', 1 + (rand() < 0.5 ? 1 : 0), 2.5, 0.28, 0.68);
+    if (sc.style === 'africa' && sc.biome === 'savanna') walkers('giraffe', 1, 2, 0.3, 0.66);
+    if (sc.style === 'oceania' && ['steppe', 'desert', 'savanna', 'temperate', 'subtropical', 'mediterranean'].includes(sc.biome)) walkers('kangaroo', 1 + (rand() < 0.5 ? 1 : 0), 6, 0.3, 0.66);
+    // sorsat avoimella järvellä lämpimään aikaan
+    const warm = sc.seasonal ? ['spring', 'summer', 'autumn'].includes(sc.foliage) : sc.biome !== 'desert';
+    if (sc.water === 'lake' && !sc.frozen && warm && ph !== 'night' && !heavy) {
+      const spr = mk('duck');
+      const yMax = Math.min.apply(null, this.prof.slice(Math.round(W * 0.33), Math.round(W * 0.7))) - 6;
+      const n = 2 + Math.floor(rand() * 3);
+      for (let i = 0; i < n; i++)
+        this.animals.push({ k: 'duck', spr, layer: 'water', x: W * (0.35 + rand() * 0.28), y: Math.round(hy + 6 + rand() * Math.max(2, yMax - hy - 8)), dir: rand() < 0.5 ? -1 : 1, v: 1 + rand() * 2, min: W * 0.3, max: W * 0.7, ph: rand() * 6, pause: 0 });
+    }
+    // lokit merenrannalla
+    this.gulls = [];
+    if (sc.water === 'sea' && ph !== 'night' && !heavy && !sc.fog) {
+      const spr = mk('gull');
+      const n = 2 + Math.floor(rand() * 2);
+      for (let i = 0; i < n; i++) this.gulls.push({ spr, cx: W * (0.2 + rand() * 0.6), cy: H * (0.18 + rand() * 0.25), R: 15 + rand() * 30, w: (0.25 + rand() * 0.3) * (rand() < 0.5 ? -1 : 1), ph: rand() * 6 });
+    }
+    // muuttolinnut keväällä ja syksyllä
+    this.flock = null;
+    if (sc.seasonal && [3, 4, 5, 9, 10].includes(sc.month) && ph !== 'night' && !heavy && !sc.fog) this.flock = { spr: mk('bird'), next: performance.now() + 2000 + rand() * 6000, birds: null };
+  };
+
+  PixelScene.prototype.stepAnimals = function (dt, t) {
+    const rand = this.rand;
+    this.animals.forEach((a) => {
+      if (a.pause > 0) { a.pause -= dt; return; }
+      a.x += a.dir * a.v * dt;
+      if (a.x < a.min) { a.x = a.min; a.dir = 1; }
+      if (a.x > a.max) { a.x = a.max; a.dir = -1; }
+      if (a.k !== 'duck' && rand() < dt * 0.12) a.pause = 1.5 + rand() * 4; // laiduntaa hetken
+      if (rand() < dt * 0.05) a.dir *= -1;
+    });
+    const f = this.flock;
+    if (!f) return;
+    if (!f.birds && t > f.next) {
+      f.dir = rand() < 0.5 ? -1 : 1;
+      f.x = f.dir > 0 ? -20 : this.W + 20;
+      f.y = this.H * (0.08 + rand() * 0.22);
+      f.v = 10 + rand() * 6;
+      const n = 7 + Math.floor(rand() * 9);
+      f.birds = [];
+      for (let i = 0; i < n; i++) { const row = Math.ceil(i / 2), side = i % 2 ? 1 : -1; f.birds.push([-f.dir * row * 4, side * row * 2, rand() * 6]); }
+    }
+    if (f.birds) {
+      f.x += f.dir * f.v * dt;
+      if ((f.dir > 0 && f.x > this.W + 80) || (f.dir < 0 && f.x < -80)) { f.birds = null; f.next = t + 15000 + rand() * 30000; }
+    }
+  };
+
+  PixelScene.prototype.drawAnimals = function (ctx, t, which) {
+    const prof = this.prof, W = this.W;
+    this.animals.forEach((a) => {
+      if (a.layer !== which) return;
+      const moving = a.pause <= 0;
+      const fi = moving ? Math.floor(t / 260 + a.ph) % a.spr.L.length : 0;
+      const img = a.dir < 0 ? a.spr.L[fi] : a.spr.R[fi];
+      const x = Math.round(a.x), o = a.spr.o;
+      let y;
+      if (which === 'water') {
+        y = a.y + (Math.floor(t / 700 + a.ph) % 2);
+        rect(ctx, a.dir < 0 ? x + a.spr.w : x - 3, y + a.spr.h - 1, 3, 1, 'rgba(255,255,255,0.35)'); // vana
+      } else {
+        y = prof[clamp(x + (a.spr.w >> 1), 0, W - 1)] - a.spr.h + 1;
+        if (a.k === 'kangaroo' && moving) y -= Math.round(Math.abs(Math.sin(t / 160 + a.ph)) * 4);
+      }
+      ctx.drawImage(img, x - o, y - o);
+    });
+  };
+
+  PixelScene.prototype.drawFlocks = function (ctx, t, which) {
+    if (which === 'far' && this.flock && this.flock.birds) {
+      const f = this.flock;
+      f.birds.forEach(([dx, dy, p]) => {
+        const fi = Math.floor(t / 220 + p) % 2;
+        ctx.drawImage(f.dir < 0 ? f.spr.L[fi] : f.spr.R[fi], Math.round(f.x + dx), Math.round(f.y + dy));
+      });
+    }
+    if (which === 'near' && this.gulls)
+      this.gulls.forEach((g) => {
+        const a = (t / 1000) * g.w + g.ph;
+        const fi = Math.floor(t / 180 + g.ph) % 2;
+        ctx.drawImage(g.spr.L[fi], Math.round(g.cx + Math.cos(a) * g.R), Math.round(g.cy + Math.sin(2 * a) * g.R * 0.25));
+      });
+  };
 
   WX.PixelScene = PixelScene;
 })();
